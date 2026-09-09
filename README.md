@@ -21,6 +21,10 @@ metallic members subjected to hot and cold temperature excursions.
   mechanics: analytical asymptote scaling, six one-variable sensitivity sweeps,
   inverse sizing for bond width / adhesive thickness / adhesive modulus, a
   bounded width × thickness design map, and a deterministic selection policy.
+- **Milestone 5** — a first-order thermal-cycle fatigue screen: stress cycles
+  from the hot/cold endpoints, illustrative Basquin S-N curves, per-component
+  life margins, an integrated static-plus-fatigue assessment, and bounded
+  fatigue sensitivity and design studies.
 
 > **Milestone 3 is a one-dimensional adhesive shear-lag screening model. It does
 > not calculate peel stress, edge singularities, adhesive fracture, nonlinear
@@ -30,6 +34,12 @@ metallic members subjected to hot and cold temperature excursions.
 > one-dimensional shear-lag equations to identify feasible first-order
 > combinations of bond width and adhesive compliance within explicitly bounded
 > design spaces.**
+
+> **Milestone 5 is a first-order constant-amplitude fatigue screen against
+> illustrative S-N curves. It is not certification life. No crack growth,
+> fracture mechanics, rainflow counting, Miner summation, peel fatigue,
+> multiaxial fatigue, plastic-strain fatigue, creep-fatigue interaction or
+> statistical scatter is included, and no mean-stress correction is applied.**
 
 Later milestones will extend the physics; see [Limitations](#limitations) for
 everything deliberately excluded so far.
@@ -53,6 +63,10 @@ everything deliberately excluded so far.
 > **Milestone 4.** Given that overlap length alone cannot recover the failing
 > canonical bondline, which physically meaningful first-order design levers
 > *can*?
+
+> **Milestone 5.** The bondline can be made statically feasible — but can
+> repeated hot/cold thermal cycling still make the metal or the adhesive
+> fatigue-critical?
 
 The primary deliverable of the overall project is a thermal stress calculation
 plus a margin at the temperature extremes. Each milestone builds and
@@ -831,6 +845,205 @@ no adhesive mass is computed or implied, and bond width is not a mass metric.
 
 ---
 
+## Milestone 5 — thermal-cycle fatigue screen
+
+> **A screening layer, not certification life.** Constant-amplitude, two
+> endpoints, illustrative curves, no mean-stress correction.
+
+### The cycle
+
+One complete **cold → hot → cold** excursion is **one thermal cycle**. Only the
+two endpoint states are used — no transient path, no dwell time, no rate
+effect, no variable-amplitude spectrum. `N` means *cycles* everywhere, never
+reversals.
+
+```
+sigma_max = max(sigma_hot, sigma_cold)      sigma_a = (sigma_max - sigma_min)/2
+sigma_min = min(sigma_hot, sigma_cold)      sigma_m = (sigma_max + sigma_min)/2
+R = sigma_min / sigma_max        (None when sigma_max is exactly zero)
+```
+
+One helper, `stress_cycle(...)`, serves both metal normal stress and adhesive
+shear, so the two can never drift apart.
+
+**The signed-endpoint trap.** The shear-lag model reverses adhesive shear with
+`dT`, so the two endpoints have **opposite signs** and the cycle crosses zero.
+Both endpoints are read at the *same station* — the free edge `x = L_b`, where
+Milestone 3 proved the peak sits. Feeding in two peak *magnitudes* instead
+collapses the cycle: for the baseline that turns a 56.90 MPa amplitude into
+9.48 MPa, a 6× under-prediction. A test asserts exactly this failure mode.
+
+### Fatigue curves and data policy
+
+Basquin power law in cycles:
+
+```
+sigma_a = A * N^b        =>        N_f = (sigma_a / A)^(1/b)
+```
+
+with `A > 0`, `b < 0`, and a mandatory non-empty provenance string. All three
+shipped curves are labelled **`ILLUSTRATIVE FATIGUE INPUT — NOT DESIGN
+ALLOWABLE`**; none is traceable to an alloy, temper, adhesive product, surface
+condition or test programme, so no such designation is claimed.
+
+| curve | `A` | `b` | `sigma_a` at 1e4 cycles |
+|---|---|---|---|
+| Aluminium-like (member 1) | 900 MPa | −0.12 | 298.0 MPa |
+| Titanium-like (member 2) | 2000 MPa | −0.10 | 796.2 MPa |
+| Adhesive **shear** | 60 MPa | −0.15 | 15.07 MPa |
+
+The adhesive curve is in **shear**, used directly against alternating shear —
+no shear-to-von-Mises conversion is applied anywhere in Milestone 5. Its
+steeper exponent reflects the greater cyclic sensitivity typical of polymeric
+adhesives. A Basquin fit has no endurance limit and no low-cycle cut-off, so
+each curve states an intended range (roughly 1e3–1e8 cycles) in its notes;
+nothing is clamped, because silently clamping would hide an extrapolation
+rather than flag it.
+
+### Mean-stress policy
+
+> **Mean stress is reported but no mean-stress correction is applied in
+> Milestone 5.**
+
+Life depends on the alternating stress alone. Goodman, Gerber and Soderberg are
+deliberately excluded: with unsourced illustrative curves, an unsourced
+correction would only add false authority. The mean stress is computed and
+carried on every result so the omission stays visible, and a test asserts that
+holding amplitude fixed while varying mean stress leaves the predicted life
+unchanged.
+
+### Life margin
+
+```
+life_ratio = N_f / N_required          MS_life = life_ratio - 1
+```
+
+A **preliminary fatigue life margin**, not certification life. `N_f >=
+N_required` passes; the boundary passes. A zero-amplitude cycle returns
+`math.inf` — explicitly non-governing rather than a division by zero.
+
+### Cycle requirement
+
+The canonical requirement is **1e4 cycles**, a round figure of the order of a
+couple of years of low-Earth-orbit thermal cycling. It is an **illustrative
+study input, not a spacecraft qualification requirement**. Because the choice
+does affect the verdict, the study reports the full requirement sensitivity
+rather than resting on one number:
+
+| `N_required` | adhesive life ratio (M4 selected point) | |
+|---|---|---|
+| 1e3 | 6.44 | PASS |
+| **1e4** | **0.644** | **FAIL** |
+| 1e5 | 0.0644 | FAIL |
+| 1e6 | 0.0064 | FAIL |
+
+### Results
+
+**Free-joint metal cycles.** Equal areas make `sigma_1 = -sigma_2`, so both
+members see the *same* amplitude and equal-and-opposite mean stress:
+
+| | hot | cold | `sigma_a` | `sigma_m` | `N_f` |
+|---|---|---|---|---|---|
+| member 1 | −62.03 | +86.84 | 74.43 MPa | +12.41 MPa | 1.05e9 |
+| member 2 | +62.03 | −86.84 | 74.43 MPa | −12.41 MPa | 1.96e14 |
+
+**The metal is nowhere near fatigue-critical** — both clear 1e4 cycles by five
+orders of magnitude or more, at every restraint level tested.
+
+**Restrained metal cycles (`eta_r = 1`).** Restraint does **not** degrade both
+members alike: member 1's amplitude rises 1.80× to 133.82 MPa while member 2's
+*falls* 0.25× to 18.88 MPa. Member 1's amplitude is monotonic in restraint;
+**member 2's is not** — it falls to a minimum and rises again. That minimum is
+the Milestone 2 zero-stress crossing at `eta_r = 0.663399`, which is
+`dT`-independent, so *both* endpoints vanish there and the titanium-like member
+sees **no thermal cycle at all**.
+
+**Adhesive cycles.**
+
+| | hot | cold | `tau_a` | `tau_m` | `R` | `N_f` | |
+|---|---|---|---|---|---|---|---|
+| M3 baseline (20 mm, 0.2 mm) | +47.42 | −66.39 | 56.90 MPa | −9.48 MPa | −1.40 | **1.4** | FAIL (also fails statically) |
+| M4 selected (50 mm, 1.0 mm) | +13.42 | −18.78 | 16.10 MPa | −2.68 MPa | −1.40 | **6439** | FAIL |
+
+The mean shear is nonzero because the excursion is asymmetric (−140 K against
++100 K); a symmetric excursion gives a zero mean, as a test confirms.
+
+### The headline result
+
+**A statically feasible bondline is not automatically fatigue-feasible.** The
+Milestone 4 selected point passes static adhesive shear at MS +0.065 but
+reaches only 6439 cycles against 10 000 required — a life ratio of 0.644. The
+adhesive governs; the metal is irrelevant to this verdict.
+
+`allowable_cycle_scale_for_fatigue(...)` inverts this exactly (amplitude is
+strictly proportional to the excursion, so no search is needed): the governing
+allowable scale is **0.9361**, i.e. the excursion would have to be cut by ~6.4%
+— to +93.6 K / −131.1 K — for that geometry to reach 1e4 cycles. At that scale
+the minimum life ratio is 1.000000000.
+
+### Fatigue versus static sizing
+
+Fatigue is the tighter constraint here. The static screen caps the cold peak
+shear at 20 MPa; the 1e4-cycle fatigue screen caps it at 17.58 MPa. So the
+static-critical and fatigue-critical geometries differ:
+
+| lever | static boundary | fatigue boundary |
+|---|---|---|
+| bond width (at `t_a` = 1.0 mm) | passes from 50 mm | passes from 75 mm |
+| bondline thickness (at `b` = 50 mm) | passes from 1.0 mm | passes from 1.5 mm |
+| adhesive modulus (at 50 mm, 1.0 mm) | passes to 1.0 GPa | passes to 0.5 GPa |
+
+**Bounded fatigue design map** (widths 20–100 mm × thicknesses 0.5–2.0 mm at
+`G_a` = 1.0 GPa), showing adhesive life ratio; `*` passes static yield, static
+shear **and** fatigue:
+
+| `b` \ `t_a` | 0.50 | 0.75 | 1.00 | 1.50 | 2.00 |
+|---|---|---|---|---|---|
+| **20 mm** | 0.003 | 0.011 | 0.029 | 0.101 | 0.232 |
+| **30 mm** | 0.012 | 0.045 | 0.116 | 0.429 | **1.055\*** |
+| **40 mm** | 0.030 | 0.117 | 0.305 | **1.157\*** | **2.923\*** |
+| **50 mm** | 0.064 | 0.247 | 0.644 | **2.465\*** | **6.317\*** |
+| **75 mm** | 0.247 | 0.956 | **2.493\*** | **9.611\*** | **24.95\*** |
+| **100 mm** | 0.645 | **2.494\*** | **6.505\*** | **25.12\*** | **65.42\*** |
+
+**12 of 30** points clear all three screens. Re-selecting with the *same*
+deterministic Milestone 4 policy:
+
+| | M4 static pick | M5 fatigue pick |
+|---|---|---|
+| bond width | 50.00 mm | **30.00 mm** |
+| adhesive thickness | 1.00 mm | **2.00 mm** |
+| bond area | 2000 mm² | **1200 mm²** |
+| static adhesive margin | +0.065 | +0.147 |
+| adhesive life `N_f` | 6439 | **10 545** |
+| minimum life ratio | 0.644 | **1.055** |
+| overall feasible | `False` | **`True`** |
+
+The fatigue-feasible pick is the **narrower** bond, because the wider grid
+allows a thicker, more compliant bondline. Its life ratio of 1.055 is slim.
+
+### Engineering interpretation
+
+- **Fatigue, not yield, is the cycling risk here.** The metals sit five to ten
+  orders of magnitude clear of the requirement; the adhesive sets the answer.
+- **Static feasibility does not imply cyclic feasibility**, and the two
+  boundaries land in different places.
+- **Life is violently nonlinear in amplitude.** With `b = -0.15`, doubling the
+  amplitude costs a factor of ~102 in life, and a 25% larger excursion costs
+  ~4.5×. Small changes in the thermal environment matter far more than they do
+  in any static check.
+- **Restraint is not uniformly bad.** It loads the high-CTE member harder and
+  unloads the low-CTE one, and at one particular stiffness it removes the
+  low-CTE member's cycle entirely.
+- **A softer, thicker bondline lengthens predicted life** in this model — but
+  creep, peel, durability and joint deformation are all absent, so low modulus
+  is not universally superior.
+- **The same caution as Milestone 3 applies, harder.** Peak shear sits at the
+  free edge, exactly where the omitted peel stress and edge singularity act,
+  and fatigue cracks in bonded joints start at precisely that location.
+
+---
+
 ## API and result structures
 
 | Object | Purpose |
@@ -894,6 +1107,23 @@ Milestone 4 additions (purely additive; no Milestone 1–3 module was touched):
 | `maximum_allowable_adhesive_shear_modulus(...)` | → `MaximumAdhesiveModulusResult` with an `AdhesiveModulusStatus` |
 | `width_thickness_design_map(...)` | bounded grid → tuple of candidates, row-major |
 | `select_preliminary_joint_design(...)` | one candidate or `None`, under `DesignSelectionPolicy` |
+
+Milestone 5 additions (again purely additive):
+
+| Object | Purpose |
+|---|---|
+| `StressCycle`, `stress_cycle(...)` | signed endpoints → `alternating_stress`, `mean_stress`, `stress_ratio`, `crosses_zero` |
+| `BasquinFatigueCurve` | `sigma_a = A N^b` with mandatory provenance; `alternating_stress_at_life`, `life_at_alternating_stress` |
+| `ThermalCycleRequirement` | required cycles + label |
+| `FatigueLifeResult`, `assess_fatigue_life(...)` | one component's life, `life_ratio` and `margin` |
+| `FatigueCurveSet` | the three curves (two metal, one adhesive **shear**) |
+| `member_stress_cycles(...)`, `adhesive_shear_cycle(...)` | cycles from the verified M1/M2/M3 solvers |
+| `assess_thermal_cycle_fatigue(...)` | → `ThermalCycleFatigueAssessment` (static + fatigue, side by side) |
+| `restraint_fatigue_sensitivity(...)` | metal-only fatigue across `eta_r` → `RestraintFatiguePoint` |
+| `allowable_cycle_scale_for_fatigue(...)` | exact allowable excursion scale → `AllowableCycleScaleResult` |
+| `temperature_scale_...`, `bond_width_...`, `adhesive_thickness_...`, `adhesive_modulus_...`, `area_ratio_fatigue_sensitivity(...)` | → tuples of `FatigueSweepPoint` |
+| `scale_environment(...)` | scale both excursions about `T_ref`, preserving asymmetry |
+| `fatigue_design_map(...)`, `select_preliminary_fatigue_design(...)` | bounded grid requiring static **and** fatigue feasibility |
 
 ### Minimal usage
 
@@ -981,6 +1211,30 @@ grid = width_thickness_design_map(
     yield_basis=YieldBasis(1.25), adhesive_basis=AdhesiveShearBasis(1.25),
 )
 selected = select_preliminary_joint_design(grid)   # a candidate, or None
+```
+
+### Milestone 5 usage
+
+```python
+from thermal_joint import assess_thermal_cycle_fatigue, allowable_cycle_scale_for_fatigue
+from thermal_joint.illustrative import (
+    illustrative_cycle_requirement, illustrative_fatigue_curves,
+)
+
+curves = illustrative_fatigue_curves()
+requirement = illustrative_cycle_requirement(1.0e4)
+
+assessment = assess_thermal_cycle_fatigue(
+    *joint, environment, overlap, adhesive, curves, requirement,
+    YieldBasis(1.25), AdhesiveShearBasis(1.25),
+)
+print(assessment.governing_fatigue_component, assessment.minimum_life_ratio)
+print(assessment.static_adhesive_feasible, assessment.fatigue_feasible)
+
+scale = allowable_cycle_scale_for_fatigue(
+    *joint, environment, overlap, adhesive, curves, requirement
+)
+print(scale.allowable_scale)   # exact, not iterative
 ```
 
 ---
@@ -1155,9 +1409,37 @@ Milestone 4 adds:
   margins, M2 restrained results, crossing and restraint boundary, M3 baseline
   shear-lag and `no_finite_length_within_model`
 
-The suite currently has **824 passing tests** — the 276 Milestone 1, 258
-Milestone 2 and 189 Milestone 3 tests, unchanged and still green, plus 101
-Milestone 4 tests.
+Milestone 5 adds:
+
+- **the signed-endpoint trap is tested directly** — feeding two peak
+  *magnitudes* instead of signed values is shown to collapse the cycle and
+  under-predict the amplitude sixfold, so the mistake cannot creep back in
+- **both adhesive endpoints are asserted to come from the same station**
+  (`x = L_b`), and to have opposite signs with unequal magnitudes
+- **the mean-stress policy is enforced by test** — four cycles with identical
+  amplitude and four different mean stresses give one identical life
+- **curve round trips** — `stress_at_life(life_at_stress(x)) == x` across three
+  curves and five decades, plus hand calculations at round decade lives
+- **cycle endpoints are asserted bit-identical** to the Milestone 1 free-joint
+  and Milestone 2 restrained stresses
+- **non-monotonicity is asserted, not assumed** — member 2's amplitude is
+  asserted *not* sorted in either direction, and its cycle is shown to vanish
+  at the Milestone 2 crossing
+- **the Basquin power law is verified through the sweeps** — scaled life is
+  checked against `scale^(1/b)` rather than merely being monotone
+- **the allowable cycle scale round-trips to a life ratio of 1** to 1e-9, and
+  is bracketed either side
+- **the fatigue design map and selection** are checked for shape, ordering,
+  determinism, order-independence, `None` on infeasibility, and against the
+  Milestone 4 static pick
+- **the requirement choice is shown to matter** — a lenient requirement is
+  asserted to yield strictly more feasible points, so the 1e4 figure cannot
+  hide behind the map
+- **M1, M2, M3 and M4 outputs re-asserted** from the Milestone 5 test files
+
+The suite currently has **938 passing tests** — the 276 Milestone 1, 258
+Milestone 2, 189 Milestone 3 and 101 Milestone 4 tests, unchanged and still
+green, plus 114 Milestone 5 tests.
 
 ---
 
@@ -1178,6 +1460,21 @@ mismatch force is fully developed and asks the overlap to carry all of it. Peak
 shear at a free edge is exactly where a real bondline is least well represented
 by a 1-D model — peel stress and the edge singularity, both excluded here, act
 in the same place.
+
+### Milestone 5 (fatigue screen)
+
+Constant-amplitude two-endpoint screen only · **illustrative S-N curves, not
+design allowables** · no mean-stress correction · no crack growth · no fracture
+mechanics · no rainflow counting · no variable-amplitude spectra · no Miner
+summation · no adhesive peel fatigue · no multiaxial fatigue · no plastic-strain
+fatigue or Coffin-Manson · no creep-fatigue interaction · no
+temperature-dependent fatigue properties · no environmental degradation · no
+probabilistic scatter or reliability factors · no dwell-time or rate effects ·
+no transient path between the endpoints · **no certification claim**
+
+The Basquin fits have no endurance limit and no low-cycle cut-off, so lives read
+outside roughly 1e3–1e8 cycles are extrapolations. Predicted lives of 1e9 and
+above should be read as "not governing", not as literal numbers.
 
 ### Milestone 4 (design trade)
 
@@ -1243,7 +1540,9 @@ design allowables.
 │   ├── shear_lag_inverse.py    M3: allowable dT and minimum overlap
 │   ├── screening.py         M3: combined yield AND adhesive feasibility
 │   ├── design_trade.py      M4: scaling, sweeps, design map, selection policy
-│   └── design_inverse.py    M4: width / thickness / modulus inverse sizing
+│   ├── design_inverse.py    M4: width / thickness / modulus inverse sizing
+│   ├── fatigue.py           M5: stress cycles, Basquin curves, life margins
+│   └── fatigue_assessment.py   M5: integrated screen, sweeps, fatigue map
 ├── tests/
 │   ├── conftest.py                      makes src/ importable without install
 │   ├── reference_solution.py            independent closed-form check
@@ -1276,12 +1575,19 @@ design allowables.
 │   ├── test_design_scaling.py           M4 tests A–F
 │   ├── test_design_sensitivity.py       M4 tests G–AE
 │   ├── test_design_inverse.py           M4 tests AF–AW
-│   └── test_design_map_and_selection.py M4 tests AX–BM
+│   ├── test_design_map_and_selection.py M4 tests AX–BM
+│   ├── fatigue_cases.py                 M5 canonical fixtures
+│   ├── test_fatigue_cycles.py           M5 cycles and the signed-endpoint trap
+│   ├── test_fatigue_curves.py           M5 curves and mean-stress policy
+│   ├── test_fatigue_assessment.py       M5 integrated static + fatigue screen
+│   ├── test_fatigue_sensitivity.py      M5 sensitivity sweeps
+│   └── test_fatigue_design_and_regression.py  M5 map, selection, M1–M4 regression
 └── examples/
     ├── bimetallic_joint_sanity.py       M1 free-joint sanity study
     ├── restraint_sensitivity.py         M2 restraint study
     ├── adhesive_shear_lag.py            M3 adhesive shear-lag study
-    └── joint_design_trade.py            M4 bondline design trade
+    ├── joint_design_trade.py            M4 bondline design trade
+    └── thermal_cycle_fatigue.py         M5 thermal-cycle fatigue screen
 ```
 
 The model is pure Python standard library — the closed-form Milestone 1
@@ -1326,6 +1632,12 @@ Run the Milestone 4 bondline design trade:
 
 ```bash
 python examples/joint_design_trade.py
+```
+
+Run the Milestone 5 thermal-cycle fatigue screen:
+
+```bash
+python examples/thermal_cycle_fatigue.py
 ```
 
 The tests and the example both insert `src/` on `sys.path`, so they also run

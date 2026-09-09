@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from .adhesive import AdhesiveMaterial, BondedOverlapGeometry
 from .environment import ThermalEnvironment
+from .fatigue import BasquinFatigueCurve, ThermalCycleRequirement
 from .materials import AxialMember, ThermoelasticMaterial
 
 __all__ = [
@@ -26,6 +27,12 @@ __all__ = [
     "titanium_like_member",
     "radiator_joint_environment",
     "radiator_joint_overlap",
+    "ILLUSTRATIVE_FATIGUE_NOTE",
+    "ALUMINIUM_LIKE_FATIGUE",
+    "TITANIUM_LIKE_FATIGUE",
+    "ADHESIVE_SHEAR_FATIGUE",
+    "illustrative_fatigue_curves",
+    "illustrative_cycle_requirement",
 ]
 
 ILLUSTRATIVE_NOTE = "ILLUSTRATIVE MATERIAL INPUT - NOT DESIGN ALLOWABLE"
@@ -37,6 +44,8 @@ MILLIMETRE = 1.0e-3
 """Conversion factor: 1 mm in m."""
 
 ILLUSTRATIVE_ADHESIVE_NOTE = "ILLUSTRATIVE ADHESIVE-LIKE INPUT - NOT DESIGN ALLOWABLE"
+
+ILLUSTRATIVE_FATIGUE_NOTE = "ILLUSTRATIVE FATIGUE INPUT - NOT DESIGN ALLOWABLE"
 
 ALUMINIUM_LIKE = ThermoelasticMaterial(
     name="Aluminium-like (illustrative)",
@@ -121,4 +130,95 @@ def radiator_joint_overlap(
         overlap_length=overlap_length_mm * MILLIMETRE,
         bond_width=bond_width_mm * MILLIMETRE,
         adhesive_thickness=adhesive_thickness_mm * MILLIMETRE,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Milestone 5: illustrative Basquin fatigue curves, sigma_a = A * N^b, N in cycles.
+#
+# ILLUSTRATIVE FATIGUE INPUT - NOT DESIGN ALLOWABLE.
+#
+# Round order-of-magnitude figures chosen to sit in a plausible range for the
+# respective material classes, selected after inspecting the canonical
+# alternating stresses and before the resulting lives were used for any
+# conclusion. None is traceable to an alloy, temper, adhesive product, surface
+# condition, environment or test programme, so no such designation is claimed
+# and no curve is tuned to force a pass or a failure.
+#
+# A Basquin power law has no endurance limit and no low-cycle cut-off, so each
+# curve states the cycle range over which it is meant to be read. Nothing is
+# clamped: silently clamping would hide an extrapolation rather than flag it.
+# ---------------------------------------------------------------------------
+
+_FATIGUE_RANGE_NOTE = (
+    "Intended to be read over roughly 1e3 to 1e8 cycles. A Basquin fit has no "
+    "endurance limit and no low-cycle cut-off, so lives extrapolated outside "
+    "that range are not meaningful."
+)
+
+ALUMINIUM_LIKE_FATIGUE = BasquinFatigueCurve(
+    name="Aluminium-like S-N (illustrative)",
+    coefficient_A=900.0e6,
+    exponent_b=-0.12,
+    source_note=ILLUSTRATIVE_FATIGUE_NOTE,
+    notes=(
+        "Axial constant-amplitude alternating stress. Gives about 298 MPa at "
+        "1e4 cycles and 130 MPa at 1e7. " + _FATIGUE_RANGE_NOTE
+    ),
+)
+"""Illustrative Al-like S-N curve. ILLUSTRATIVE FATIGUE INPUT - NOT DESIGN ALLOWABLE."""
+
+TITANIUM_LIKE_FATIGUE = BasquinFatigueCurve(
+    name="Titanium-like S-N (illustrative)",
+    coefficient_A=2000.0e6,
+    exponent_b=-0.10,
+    source_note=ILLUSTRATIVE_FATIGUE_NOTE,
+    notes=(
+        "Axial constant-amplitude alternating stress; a shallower exponent than "
+        "the aluminium-like curve, as titanium alloys generally are. About "
+        "796 MPa at 1e4 cycles and 399 MPa at 1e7. " + _FATIGUE_RANGE_NOTE
+    ),
+)
+"""Illustrative Ti-like S-N curve. ILLUSTRATIVE FATIGUE INPUT - NOT DESIGN ALLOWABLE."""
+
+ADHESIVE_SHEAR_FATIGUE = BasquinFatigueCurve(
+    name="Structural-adhesive-like shear S-N (illustrative)",
+    coefficient_A=60.0e6,
+    exponent_b=-0.15,
+    source_note=ILLUSTRATIVE_FATIGUE_NOTE,
+    notes=(
+        "Alternating ADHESIVE SHEAR stress, used directly - no shear-to-von-Mises "
+        "conversion is applied anywhere in Milestone 5. The steeper exponent "
+        "reflects the greater cyclic sensitivity typical of polymeric adhesives. "
+        "About 15.1 MPa at 1e4 cycles and 7.6 MPa at 1e6. " + _FATIGUE_RANGE_NOTE
+    ),
+)
+"""Illustrative adhesive shear S-N curve. ILLUSTRATIVE FATIGUE INPUT - NOT DESIGN ALLOWABLE."""
+
+
+def illustrative_fatigue_curves():
+    """The three illustrative curves as a
+    :class:`~thermal_joint.fatigue_assessment.FatigueCurveSet`."""
+    from .fatigue_assessment import FatigueCurveSet
+
+    return FatigueCurveSet(
+        member_1=ALUMINIUM_LIKE_FATIGUE,
+        member_2=TITANIUM_LIKE_FATIGUE,
+        adhesive_shear=ADHESIVE_SHEAR_FATIGUE,
+    )
+
+
+def illustrative_cycle_requirement(required_cycles: float = 1.0e4):
+    """Illustrative thermal-cycle requirement, default 1e4 cycles.
+
+    1e4 is a round figure of the order of a couple of years of low-Earth-orbit
+    thermal cycling. It is an **illustrative study input, not a spacecraft
+    qualification requirement**, and it was picked from a short list of round
+    values (1e3, 1e4, 1e5, 1e6) rather than tuned: the accompanying study
+    reports the full requirement sensitivity across all four so that no single
+    choice drives the conclusion.
+    """
+    return ThermalCycleRequirement(
+        required_cycles=required_cycles,
+        label="illustrative thermal-cycle requirement - not a qualification requirement",
     )

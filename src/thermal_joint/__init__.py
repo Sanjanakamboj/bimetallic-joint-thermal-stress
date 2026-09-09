@@ -25,6 +25,12 @@ inverse sizing for bond width, adhesive thickness and adhesive shear modulus, a
 bounded width x thickness design map, and a deterministic selection policy. It
 does not optimize a flight joint.
 
+Milestone 5 adds a first-order thermal-cycle fatigue screen on top of those
+verified states: stress cycles from the hot/cold endpoints, illustrative
+Basquin S-N curves, life inversion, per-component life margins, an integrated
+static-plus-fatigue assessment, and bounded sensitivity and design studies.
+Mean stress is reported but no mean-stress correction is applied.
+
 SI units throughout: E [Pa], alpha [1/K], area [m^2], stress [Pa], force [N],
 strain [-]. Temperature differences may be K or degC increments.
 
@@ -63,6 +69,35 @@ from .design_trade import (
 )
 from .environment import ThermalEnvironment
 from .extremes import TemperatureExtremeAssessment, assess_temperature_extremes
+from .fatigue import (
+    BasquinFatigueCurve,
+    FatigueLifeResult,
+    StressCycle,
+    ThermalCycleRequirement,
+    assess_fatigue_life,
+    stress_cycle,
+)
+from .fatigue_assessment import (
+    AllowableCycleScaleResult,
+    FatigueCurveSet,
+    FatigueDesignCandidate,
+    FatigueSweepPoint,
+    RestraintFatiguePoint,
+    ThermalCycleFatigueAssessment,
+    adhesive_modulus_fatigue_sensitivity,
+    adhesive_shear_cycle,
+    adhesive_thickness_fatigue_sensitivity,
+    allowable_cycle_scale_for_fatigue,
+    area_ratio_fatigue_sensitivity,
+    assess_thermal_cycle_fatigue,
+    bond_width_fatigue_sensitivity,
+    fatigue_design_map,
+    member_stress_cycles,
+    restraint_fatigue_sensitivity,
+    scale_environment,
+    select_preliminary_fatigue_design,
+    temperature_scale_fatigue_sensitivity,
+)
 from .inverse import (
     MaximumRestraintResult,
     RestraintLimitStatus,
@@ -183,6 +218,32 @@ __all__ = [
     "thermal_excursion_sensitivity",
     "uniform_shear_floor",
     "width_thickness_design_map",
+    # Milestone 5 - thermal-cycle fatigue screening
+    "AllowableCycleScaleResult",
+    "BasquinFatigueCurve",
+    "FatigueCurveSet",
+    "FatigueDesignCandidate",
+    "FatigueLifeResult",
+    "FatigueSweepPoint",
+    "RestraintFatiguePoint",
+    "StressCycle",
+    "ThermalCycleFatigueAssessment",
+    "ThermalCycleRequirement",
+    "adhesive_modulus_fatigue_sensitivity",
+    "adhesive_shear_cycle",
+    "adhesive_thickness_fatigue_sensitivity",
+    "allowable_cycle_scale_for_fatigue",
+    "area_ratio_fatigue_sensitivity",
+    "assess_fatigue_life",
+    "assess_thermal_cycle_fatigue",
+    "bond_width_fatigue_sensitivity",
+    "fatigue_design_map",
+    "member_stress_cycles",
+    "restraint_fatigue_sensitivity",
+    "scale_environment",
+    "select_preliminary_fatigue_design",
+    "stress_cycle",
+    "temperature_scale_fatigue_sensitivity",
 ]
 
-__version__ = "0.4.0"
+__version__ = "0.5.0"
