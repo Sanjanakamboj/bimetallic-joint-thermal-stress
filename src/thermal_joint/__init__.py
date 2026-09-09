@@ -12,6 +12,13 @@ structure: :class:`AxialRestraint`, :func:`solve_restrained_joint`,
 search for the maximum tolerable restraint stiffness. The Milestone 1
 free-joint solution is preserved exactly as the zero-restraint limit.
 
+Milestone 3 adds a *local* load-transfer layer: a one-dimensional linear-elastic
+adhesive shear-lag screen for a finite bonded overlap
+(:class:`AdhesiveMaterial`, :class:`BondedOverlapGeometry`,
+:func:`solve_shear_lag`, :func:`assess_shear_lag_extremes`), plus allowable-dT
+and minimum-overlap inverse design. The shear-lag demand is imported from the
+Milestone 1 free-joint solution, never re-derived.
+
 SI units throughout: E [Pa], alpha [1/K], area [m^2], stress [Pa], force [N],
 strain [-]. Temperature differences may be K or degC increments.
 
@@ -20,6 +27,7 @@ Sign convention: tension positive, compression negative, positive dT = heating.
 
 from __future__ import annotations
 
+from .adhesive import AdhesiveMaterial, AdhesiveShearBasis, BondedOverlapGeometry
 from .environment import ThermalEnvironment
 from .extremes import TemperatureExtremeAssessment, assess_temperature_extremes
 from .inverse import (
@@ -40,6 +48,24 @@ from .materials import AxialMember, ThermoelasticMaterial
 from .restrained_extremes import (
     RestrainedTemperatureExtremeAssessment,
     assess_restrained_temperature_extremes,
+)
+from .screening import PreliminaryScreeningResult, screen_joint
+from .shear_lag import (
+    ShearLagDemand,
+    adherend_compliance_sum,
+    dimensionless_overlap,
+    long_overlap_peak_shear_stress,
+    shear_lag_parameter,
+    solve_shear_lag,
+    thermal_mismatch_strain,
+    transfer_length,
+)
+from .shear_lag_extremes import ShearLagExtremeAssessment, assess_shear_lag_extremes
+from .shear_lag_inverse import (
+    OverlapLimitStatus,
+    RequiredOverlapResult,
+    allowable_temperature_change_for_adhesive_shear,
+    required_overlap_length,
 )
 from .restraint import (
     AxialRestraint,
@@ -80,6 +106,26 @@ __all__ = [
     "rigid_restraint_stresses",
     "solve_restrained_joint",
     "zero_stress_restraint_stiffness",
+    # Milestone 3 - adhesive shear-lag over a finite bonded overlap
+    "AdhesiveMaterial",
+    "AdhesiveShearBasis",
+    "BondedOverlapGeometry",
+    "OverlapLimitStatus",
+    "PreliminaryScreeningResult",
+    "RequiredOverlapResult",
+    "ShearLagDemand",
+    "ShearLagExtremeAssessment",
+    "adherend_compliance_sum",
+    "allowable_temperature_change_for_adhesive_shear",
+    "assess_shear_lag_extremes",
+    "dimensionless_overlap",
+    "long_overlap_peak_shear_stress",
+    "required_overlap_length",
+    "screen_joint",
+    "shear_lag_parameter",
+    "solve_shear_lag",
+    "thermal_mismatch_strain",
+    "transfer_length",
 ]
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"

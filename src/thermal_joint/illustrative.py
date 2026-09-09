@@ -10,23 +10,33 @@ designation is claimed. Do not use these numbers for design.
 
 from __future__ import annotations
 
+from .adhesive import AdhesiveMaterial, BondedOverlapGeometry
 from .environment import ThermalEnvironment
 from .materials import AxialMember, ThermoelasticMaterial
 
 __all__ = [
     "ILLUSTRATIVE_NOTE",
+    "ILLUSTRATIVE_ADHESIVE_NOTE",
     "ALUMINIUM_LIKE",
     "TITANIUM_LIKE",
+    "ADHESIVE_LIKE",
     "SQUARE_MILLIMETRE",
+    "MILLIMETRE",
     "aluminium_like_member",
     "titanium_like_member",
     "radiator_joint_environment",
+    "radiator_joint_overlap",
 ]
 
 ILLUSTRATIVE_NOTE = "ILLUSTRATIVE MATERIAL INPUT - NOT DESIGN ALLOWABLE"
 
 SQUARE_MILLIMETRE = 1.0e-6
 """Conversion factor: 1 mm^2 in m^2."""
+
+MILLIMETRE = 1.0e-3
+"""Conversion factor: 1 mm in m."""
+
+ILLUSTRATIVE_ADHESIVE_NOTE = "ILLUSTRATIVE ADHESIVE-LIKE INPUT - NOT DESIGN ALLOWABLE"
 
 ALUMINIUM_LIKE = ThermoelasticMaterial(
     name="Aluminium-like (illustrative)",
@@ -76,4 +86,39 @@ def radiator_joint_environment() -> ThermalEnvironment:
         reference_temperature=20.0,
         cold_temperature=-120.0,
         hot_temperature=120.0,
+    )
+
+
+ADHESIVE_LIKE = AdhesiveMaterial(
+    name="Structural-adhesive-like (illustrative)",
+    shear_modulus=1.0e9,
+    shear_strength=25.0e6,
+    source_note=ILLUSTRATIVE_ADHESIVE_NOTE,
+    notes=(
+        "Clean mid-range values for a stiff structural film adhesive at room "
+        "temperature. Not traceable to any product, cure state, bondline "
+        "preparation or test programme, so no commercial adhesive is named. "
+        "Chosen before the resulting shear stresses were computed; not tuned "
+        "to produce a pass or a failure."
+    ),
+)
+"""Illustrative adhesive. ILLUSTRATIVE ADHESIVE-LIKE INPUT - NOT DESIGN ALLOWABLE."""
+
+
+def radiator_joint_overlap(
+    overlap_length_mm: float = 40.0,
+    bond_width_mm: float = 20.0,
+    adhesive_thickness_mm: float = 0.2,
+) -> BondedOverlapGeometry:
+    """Illustrative bonded overlap for the radiator joint, dimensions in mm.
+
+    The default 40 x 20 mm overlap with a 0.2 mm bondline spans about 6.1
+    transfer lengths for the illustrative adhesive and members, which is a
+    meaningful but not pathological overlap: long enough for the interior to be
+    nearly shear-free, short enough that the end effect is still visible.
+    """
+    return BondedOverlapGeometry(
+        overlap_length=overlap_length_mm * MILLIMETRE,
+        bond_width=bond_width_mm * MILLIMETRE,
+        adhesive_thickness=adhesive_thickness_mm * MILLIMETRE,
     )

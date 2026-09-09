@@ -3,7 +3,7 @@
 Thermal-stress analysis of a spacecraft radiator joint made from two dissimilar
 metallic members subjected to hot and cold temperature excursions.
 
-**Status: Milestone 2 of an ongoing portfolio project — not complete.**
+**Status: Milestone 3 of an ongoing portfolio project — not complete.**
 
 - **Milestone 1** — the verified mechanics foundation: closed-form axial thermal
   stress in a perfectly bonded two-member joint under a uniform temperature
@@ -13,6 +13,14 @@ metallic members subjected to hot and cold temperature excursions.
   preliminary inverse-design search for the maximum tolerable restraint
   stiffness. The Milestone 1 free-joint solution is preserved *exactly* as the
   zero-restraint limit.
+- **Milestone 3** — a one-dimensional adhesive shear-lag screen for a finite
+  bonded overlap: how the Milestone 1 mismatch force is actually transferred,
+  what adhesive shear results, allowable temperature excursion, and
+  minimum-overlap inverse design.
+
+> **Milestone 3 is a one-dimensional adhesive shear-lag screening model. It does
+> not calculate peel stress, edge singularities, adhesive fracture, nonlinear
+> response or finite-element joint stresses.**
 
 Later milestones will extend the physics; see [Limitations](#limitations) for
 everything deliberately excluded so far.
@@ -29,9 +37,20 @@ everything deliberately excluded so far.
 > not perfectly free to expand, but is attached to surrounding spacecraft
 > structure with finite axial stiffness?
 
+> **Milestone 3.** If the free-joint CTE-mismatch force must be transferred
+> through a finite bonded overlap, what axial-force distribution and adhesive
+> shear stress develop along that overlap?
+
 The primary deliverable of the overall project is a thermal stress calculation
 plus a margin at the temperature extremes. Each milestone builds and
 independently verifies the mechanics that answer its question.
+
+**Global versus local.** Milestones 1 and 2 are *global*: they determine the
+CTE-mismatch force the joint carries, with and without external restraint.
+Milestone 3 is *local*: it takes that force as its demand and asks how it is
+transferred through a finite bonded overlap. The shear-lag layer imports the
+Milestone 1 member force directly from `solve_bimetallic_joint` and never
+re-derives it, so the two levels cannot drift apart.
 
 ---
 
@@ -351,6 +370,250 @@ extreme.
 
 ---
 
+## Milestone 3 — adhesive shear-lag over a finite overlap
+
+> **A screening model.** One-dimensional, linear-elastic load transfer and
+> adhesive shear only. No peel stress, no edge singularities, no adhesive
+> fracture, no nonlinear response, no finite-element joint stresses.
+
+### Assumptions
+
+- two axial adherends, constant overlap length and constant bond width
+- thin adhesive layer of constant thickness, constant shear modulus, linear elastic
+- adherends carry axial force only
+- no bending, no eccentricity, no peel stress, no adhesive normal stress
+- no free-edge singularity model, no yielding, no slip or debond
+- uniform temperature, uniform properties, perfect bond
+
+### Adhesive data and overlap geometry
+
+`AdhesiveMaterial` carries `shear_modulus`, `shear_strength` and a **mandatory
+non-empty `source_note`**, so a screening number can never be mistaken for a
+qualified allowable. The shipped record is labelled
+`ILLUSTRATIVE ADHESIVE-LIKE INPUT — NOT DESIGN ALLOWABLE`; no commercial
+adhesive is named, because the properties are not sourced.
+
+| | Illustrative adhesive | Illustrative overlap |
+|---|---|---|
+| `G_a` | 1.0 GPa | `L_b` = 40 mm |
+| shear strength | 25 MPa | `b` = 20 mm |
+| design factor | 1.25 → `tau_allow` = 20 MPa | `t_a` = 0.2 mm |
+
+`bond_area = b * L_b` = 800 mm² is the bonded interface area, kept deliberately
+distinct from the adherends' 100 mm² cross-sections. Both values are clean
+mid-range picks made *before* the resulting stresses were computed — nothing is
+tuned to manufacture a pass or a failure.
+
+### Mismatch strain and the shear-lag parameter
+
+```
+d_eps = (alpha_1 - alpha_2) * dT
+```
+
+Member 1 minus member 2, used consistently. With `S_i = E_i A_i` and
+`C = 1/S_1 + 1/S_2`, the governing equation derived below gives
+
+```
+beta^2 = (G_a b / t_a) * ( 1/(E_1 A_1) + 1/(E_2 A_2) )
+```
+
+Dimensions check: `G_a b / t_a` is [N/m²], `1/(EA)` is [1/N], so `beta²` is
+[1/m²] and `beta` is [1/m]. **Both** adherend compliances enter — a joint
+spreads load only as well as its more compliant member allows.
+
+```
+transfer length = 1 / beta          lambda = beta * L_b
+```
+
+`lambda` (not `beta L_b / 2`) is the single dimensionless overlap metric used
+everywhere in this package: the number of transfer lengths the overlap spans.
+
+### Sign convention and derivation
+
+`u_i(x)` is axial displacement, `s(x) = u_1 - u_2` is the relative slip, and the
+adhesive is linear: `tau(x) = (G_a / t_a) s(x)`. Adherend forces are
+tension-positive, `N_i = E_i A_i (du_i/dx - alpha_i dT)`.
+
+For an axial bar with distributed applied load `q` per unit length,
+`dN/dx = -q`. When `s > 0` the adhesive drags adherend 1 backward and adherend 2
+forward, so `q_1 = -b tau` and `q_2 = +b tau`:
+
+```
+dN_1/dx = +b tau        dN_2/dx = -b tau        d(N_1 + N_2)/dx = 0
+```
+
+This is the **sign-mirror of one common textbook ordering**; it is the version
+consistent with `tau = +(G_a/t_a)(u_1 - u_2)`, and it is what makes the governing
+equation stable rather than oscillatory. With the self-equilibrating free-joint
+pair `N_2 = -N_1`:
+
+```
+ds/dx   = N_1/S_1 - N_2/S_2 + d_eps = C N_1 + d_eps
+d2s/dx2 = C dN_1/dx = C b (G_a/t_a) s
+
+=>  d2s/dx2 - beta^2 s = 0
+```
+
+### Boundary conditions
+
+The domain is `x in [0, L_b]`:
+
+- **`x = 0` — the loaded transfer plane.** The inboard edge of the overlap,
+  where the free-joint mismatch force pair is fully developed:
+  `N_1(0) = N_t` and `N_2(0) = -N_t`, with `N_t` imported from Milestone 1.
+- **`x = L_b` — the free edge.** `N_1(L_b) = N_2(L_b) = 0`.
+
+Prescribing the Milestone 1 force at the loaded plane is the **conservative
+screening idealisation**: it assumes the mismatch force is fully developed and
+requires the overlap to shear-transfer all of it.
+
+### Closed-form distributions
+
+`s = A cosh(beta x) + B sinh(beta x)` with `N_1 = (ds/dx - d_eps)/C`.
+`N_1(0) = N_t = -d_eps/C` forces `B = 0`; `N_1(L_b) = 0` then fixes `A`:
+
+```
+N_1(x) =  N_t [ 1 - sinh(beta x) / sinh(beta L_b) ]
+N_2(x) = -N_1(x)
+tau(x) = -(N_t beta / b) cosh(beta x) / sinh(beta L_b)
+```
+
+Evaluated in closed form — the ODE is never solved numerically. The hyperbolic
+ratios are implemented in an overflow-safe form, so a `lambda = 100` overlap
+still evaluates cleanly.
+
+### Peak versus average shear
+
+`|tau|` is proportional to `cosh(beta x)`, whose derivative `beta sinh(beta x)`
+is strictly positive for `x > 0`. So `|tau|` increases monotonically across the
+overlap and the peak is at the **free edge** `x = L_b` — proven from the
+derivative, not assumed.
+
+```
+tau_peak = |N_t| beta coth(beta L_b) / b
+tau_avg  = |N_t| / (b L_b)                    (whole overlap — no factor of two)
+tau_peak / tau_avg = lambda coth(lambda)
+```
+
+The concentration factor `lambda coth(lambda)` → 1 as `lambda → 0` (a very
+short overlap shears almost uniformly) and → `lambda` as `lambda → ∞`.
+
+The long-overlap asymptote is analytic:
+
+```
+tau_inf = |N_t| beta / b
+```
+
+and peak shear approaches it **from above**. That makes `tau_inf` a hard lower
+bound: no overlap length, however long, can push the peak below it.
+
+### Force-transfer verification
+
+Five identities are enforced by tests: `N_1 + N_2 = 0` at every station;
+`b ∫ tau dx` equals the change in adherend force; the loaded-plane force equals
+the Milestone 1 demand exactly; the force-transfer residual vanishes to machine
+precision; and zero mismatch gives zero force and shear everywhere. The integral
+check is done with a Simpson rule **implemented in the test**, not by reusing
+the model's own closed-form integral.
+
+### Adhesive margin
+
+```
+tau_allow = shear_strength / design_factor
+MS_adh    = tau_allow / abs(tau_peak) - 1
+```
+
+A **preliminary adhesive shear margin**, not a certification margin. Design
+factor ≥ 1, boundary `MS = 0` passes, zero demand returns `math.inf`. The
+governing extreme is computed from the two margins, with an exact tie resolving
+to `"cold"` as in the earlier milestones.
+
+### Global + local screening
+
+`screen_joint(...)` runs the Milestone 1 yield screen and the Milestone 3
+adhesive screen together. The two margins are **reported separately and never
+combined numerically** — they measure different failure modes against different
+allowables. Only the pass/fail booleans are combined, with a plain boolean AND.
+
+---
+
+## Representative Milestone 3 result
+
+Illustrative joint and environment as before, 40 × 20 mm overlap, 0.2 mm
+bondline, `G_a` = 1.0 GPa, adhesive design factor 1.25 (`tau_allow` = 20 MPa).
+
+```
+beta = 152.894 /m      transfer length = 6.54 mm      lambda = beta L_b = 6.116
+```
+
+| | Hot (`dT = +100 K`) | Cold (`dT = -140 K`) |
+|---|---|---|
+| transferred force `N_t` | 6202.78 N | 8683.89 N |
+| `tau_peak` (free edge) | 47.42 MPa | **66.39 MPa** |
+| `tau_avg` | 7.75 MPa | 10.85 MPa |
+| peak / average | 6.116 | 6.116 |
+| adhesive margin | −0.578 FAIL | **−0.699 FAIL** |
+
+**Cold governs**, at a ratio of exactly 140/100 = 1.4 — peak shear is linear in
+`dT`, so the larger excursion wins. Computed from the margins, not assumed.
+
+**Overlap sensitivity** (cold, governing):
+
+| `L_b` [mm] | `lambda` | `tau_peak` [MPa] | `tau_avg` [MPa] | peak/avg |
+|---|---|---|---|---|
+| 5 | 0.76 | 103.13 | 86.84 | 1.19 |
+| 10 | 1.53 | 72.93 | 43.42 | 1.68 |
+| 20 | 3.06 | 66.68 | 21.71 | 3.07 |
+| 40 | 6.12 | 66.39 | 10.85 | 6.12 |
+| 80 | 12.23 | 66.386 | 5.43 | 12.23 |
+| 160 | 24.46 | 66.386 | 2.71 | 24.46 |
+
+Average shear falls as `1/L_b` — a 32× reduction across the sweep — while the
+peak moves by less than 1% beyond 20 mm, converging on the 66.386 MPa
+asymptote. **This is the central Milestone 3 conclusion: overlap length buys
+average shear, not peak shear.**
+
+**Adhesive thickness** (0.05 → 1.0 mm) lowers `beta` from 305.8 to 68.4 /m,
+lengthens the transfer zone from 3.27 to 14.62 mm and cuts peak shear from
+132.8 to 29.9 MPa. **Adhesive modulus** (0.1 → 5 GPa) does the reverse, raising
+peak shear from 21.9 to 148.4 MPa.
+
+**Area ratio** `A_Al/A_Ti` (0.25 → 4) is recomputed end to end: the Milestone 1
+demand rises from 3065 to 16032 N while `beta` falls from 257 to 113 /m, and
+peak shear rises on balance from 39.4 to 90.2 MPa.
+
+**Allowable excursion:** `|dT|_allow = 42.18 K` at this geometry — against study
+excursions of −140 K and +100 K.
+
+**Minimum overlap:** status `no_finite_length_within_model`. The allowable
+(20 MPa) is below the long-overlap asymptote (66.386 MPa), so **no finite
+overlap can pass** and no number is invented. Adding bonded length is the wrong
+lever here.
+
+**Combined screen:** member yield **+1.487 PASS**, adhesive shear **−0.699
+FAIL**, overall feasibility `False`, failing screen `adhesive shear`. Reported
+honestly: this illustrative joint is limited by its bondline, not by its metal.
+
+### Engineering interpretation
+
+- **M1 sets the demand.** The CTE-mismatch force is a global compatibility
+  result and does not depend on how the joint is bonded.
+- **M3 sets the transfer.** How that force spreads over the overlap depends on
+  the adhesive shear stiffness and *both* adherend axial stiffnesses, through
+  `beta`.
+- **A thicker or more compliant adhesive spreads load over a longer transfer
+  region**, lowering `beta` and the peak shear.
+- **Longer overlap strongly reduces average shear but eventually gives
+  diminishing reduction in peak end shear**, which is floored at `tau_inf`.
+- **Cold governs the canonical magnitude** because 140 K > 100 K, for
+  temperature-independent properties.
+- **Lower predicted peak shear with a softer adhesive is not automatically a
+  complete design improvement.** Peel stress, creep, durability, and joint
+  deformation are all omitted from this screen, and every one of them tends to
+  get worse as the bondline gets softer or thicker.
+
+---
+
 ## API and result structures
 
 | Object | Purpose |
@@ -379,6 +642,24 @@ Milestone 2 additions (all backward compatible — nothing above changed):
 | `assess_restrained_temperature_extremes(...)` | → `RestrainedTemperatureExtremeAssessment` |
 | `maximum_allowable_restraint_stiffness(...)` | → `MaximumRestraintResult` with a `RestraintLimitStatus` |
 | `rigid_restraint_minimum_margin(...)` | minimum margin in the fully restrained asymptote |
+
+Milestone 3 additions (again purely additive):
+
+| Object | Purpose |
+|---|---|
+| `AdhesiveMaterial` | `shear_modulus`, `shear_strength`, mandatory `source_note`, optional `notes` |
+| `BondedOverlapGeometry` | `overlap_length`, `bond_width`, `adhesive_thickness`; `bond_area`, plus `with_*` copy helpers used by the sweeps |
+| `AdhesiveShearBasis` | `design_factor` ≥ 1; `allowable_shear_stress(...)`, `margin_of_safety(...)` |
+| `thermal_mismatch_strain(...)` | `(alpha_1 - alpha_2) dT` |
+| `adherend_compliance_sum(...)` | `C = 1/(E_1 A_1) + 1/(E_2 A_2)` |
+| `shear_lag_parameter(...)` / `transfer_length(...)` / `dimensionless_overlap(...)` | `beta`, `1/beta`, `lambda = beta L_b` |
+| `solve_shear_lag(...)` | → `ShearLagDemand` |
+| `ShearLagDemand` | scalars plus `shear_stress(x)`, `member_1_force(x)`, `member_2_force(x)`, all range-checked to `[0, L_b]` |
+| `long_overlap_peak_shear_stress(...)` | analytic `tau_inf = |N_t| beta / b` |
+| `assess_shear_lag_extremes(...)` | → `ShearLagExtremeAssessment` |
+| `allowable_temperature_change_for_adhesive_shear(...)` | closed-form `|dT|_allow` [K] |
+| `required_overlap_length(...)` | → `RequiredOverlapResult` with an `OverlapLimitStatus` |
+| `screen_joint(...)` | → `PreliminaryScreeningResult` (yield AND adhesive) |
 
 ### Minimal usage
 
@@ -418,6 +699,33 @@ print(restrained.governing_extreme, restrained.minimum_yield_margin)
 
 limit = maximum_allowable_restraint_stiffness(*joint, environment, YieldBasis(1.25))
 print(limit.status.value, limit.maximum_stiffness_ratio)
+```
+
+### Milestone 3 usage
+
+```python
+from thermal_joint import (
+    AdhesiveMaterial, AdhesiveShearBasis, BondedOverlapGeometry,
+    assess_shear_lag_extremes, required_overlap_length,
+)
+
+adhesive = AdhesiveMaterial(
+    "Adhesive-like", shear_modulus=1.0e9, shear_strength=25e6,
+    source_note="ILLUSTRATIVE ADHESIVE-LIKE INPUT - NOT DESIGN ALLOWABLE",
+)
+overlap = BondedOverlapGeometry(
+    overlap_length=0.040, bond_width=0.020, adhesive_thickness=0.0002,
+)
+
+shear = assess_shear_lag_extremes(
+    *joint, environment, overlap, adhesive, AdhesiveShearBasis(1.25)
+)
+print(shear.governing_extreme, shear.governing_peak_shear_stress, shear.minimum_margin)
+
+sizing = required_overlap_length(
+    *joint, environment, overlap, adhesive, AdhesiveShearBasis(1.25)
+)
+print(sizing.status.value)
 ```
 
 ---
@@ -533,25 +841,75 @@ Milestone 2 adds, in the same spirit:
   above; all four statuses are exercised, including a synthetic joint that
   proves the bisection itself works
 
-The suite currently has **534 passing tests** — the 276 Milestone 1 tests,
-unchanged and still green, plus 258 Milestone 2 tests.
+Milestone 3 adds, again in the same spirit:
+
+- **independent numerical integration** — a Simpson rule implemented inside the
+  test integrates the production `tau(x)` and reproduces the adherend force
+  change, end to end and on sub-intervals; the model's own closed-form integral
+  is never used to check itself
+- **hand calculations with a round `beta`** — inputs chosen so `beta = 100 /m`
+  and `lambda = 2` exactly, giving `tau_avg = 12.5 MPa`, `tau_peak = 25 MPa ×
+  coth(2)`, `N_1(10 mm) = -3379.9 N`
+- **the peak location is proven, not assumed** — the derivative argument is
+  backed by scanning 5001 stations across the overlap
+- **self-equilibrium everywhere** — `N_1 + N_2 = 0` checked at 51 stations
+- **demand reuse** — the transferred force is asserted *bit-identical* to
+  `solve_bimetallic_joint(...).member_1_force`, and separately cross-checked
+  against the independent identity `N_t = -d_eps / C`
+- **short and long overlap limits** — `lambda coth(lambda) → 1` at
+  `lambda < 0.06`, the distribution itself flattening to within 0.1%; and peak
+  shear converging monotonically on the analytic asymptote from above with
+  strictly diminishing returns per doubling
+- **scaling laws** — peak shear exactly linear in `dT`, cold/hot ratio exactly
+  1.4 for the canonical environment
+- **inverse design** — the allowable `dT` round-trips to `MS = 0` exactly, the
+  finite required length matches an independent `atanh` solution, and all four
+  overlap statuses are exercised, three of them with synthetic fixtures
+- **numerical robustness** — a `lambda = 100` overlap evaluates without
+  overflow, thanks to overflow-safe hyperbolic ratios
+- **regression on the earlier milestones** — the Milestone 1 stresses and
+  margins and the Milestone 2 restrained results, crossing stiffness and
+  restraint boundary are all re-asserted from Milestone 3 test files
+- **sweeps are non-mutating** — the shipped members, geometry and adhesive are
+  asserted unchanged after every sensitivity sweep
+
+The suite currently has **723 passing tests** — the 276 Milestone 1 and 258
+Milestone 2 tests, unchanged and still green, plus 189 Milestone 3 tests.
 
 ---
 
 ## Limitations
 
+### Milestone 3 (adhesive shear-lag)
+
+1-D shear-lag only · no peel stress · no bending or eccentricity · no free-edge
+singularity · no adhesive normal stress · no adhesive plasticity · no
+cohesive-zone or fracture model · no debond growth · no creep · no fatigue · no
+thermal gradient · no temperature-dependent properties · no fillets or spew
+geometry · no surface-preparation effects · no manufacturing defects · no
+environmental degradation · illustrative adhesive properties · **no
+certification claim**
+
+The prescribed loaded-plane force is a conservative idealisation: it assumes the
+mismatch force is fully developed and asks the overlap to carry all of it. Peak
+shear at a free edge is exactly where a real bondline is least well represented
+by a 1-D model — peel stress and the edge singularity, both excluded here, act
+in the same place.
+
+### Global model
+
 Not modelled through Milestone 2, and **not** to be inferred from these results:
 
-interface shear-lag · adhesive stresses · finite joint length or overlap ·
 bolts and fasteners · contact and slip · nonlinear springs · plasticity ·
 creep · fatigue · thermal gradients through thickness ·
 temperature-dependent properties · nonlinear material behaviour · plate
 bending and warpage · detailed radiator geometry · optimization · candidate
 material trade studies · portfolio figures
 
-In short: *this is a perfectly bonded, uniform-temperature axial compatibility
-model with a single linear external restraint; interface shear, finite joint
-length, thermal gradients, plasticity and fatigue are not included.*
+In short: *the global model is a perfectly bonded, uniform-temperature axial
+compatibility model with a single linear external restraint, and the local model
+is a one-dimensional linear-elastic adhesive shear-lag screen; thermal
+gradients, plasticity, fatigue, peel and fracture are not included.*
 
 The restraint is one lumped linear spring acting on the common joint strain. It
 represents a surrounding load path in aggregate; it is not a model of any
@@ -580,7 +938,12 @@ design allowables.
 │   ├── illustrative.py      illustrative inputs (NOT design allowables)
 │   ├── restraint.py         M2: AxialRestraint, restrained closed form, limits
 │   ├── restrained_extremes.py  M2: hot/cold assessment under restraint
-│   └── inverse.py           M2: maximum tolerable restraint stiffness
+│   ├── inverse.py           M2: maximum tolerable restraint stiffness
+│   ├── adhesive.py          M3: adhesive, overlap geometry, shear basis
+│   ├── shear_lag.py         M3: beta, closed-form distributions, peak/average
+│   ├── shear_lag_extremes.py   M3: hot/cold adhesive shear assessment
+│   ├── shear_lag_inverse.py    M3: allowable dT and minimum overlap
+│   └── screening.py         M3: combined yield AND adhesive feasibility
 ├── tests/
 │   ├── conftest.py                      makes src/ importable without install
 │   ├── reference_solution.py            independent closed-form check
@@ -599,10 +962,20 @@ design allowables.
 │   ├── test_restrained_limits.py        M2 tests N–V
 │   ├── test_restraint_sensitivity.py    M2 load sharing, sensitivity, sign flip
 │   ├── test_restrained_extremes.py      M2 margins and governing selection
-│   └── test_inverse_restraint.py        M2 inverse-design search
+│   ├── test_inverse_restraint.py        M2 inverse-design search
+│   ├── shear_lag_cases.py               M3 hand-calculation inputs
+│   ├── test_adhesive_and_overlap.py     M3 tests A–I
+│   ├── test_shear_lag_parameters.py     M3 tests J–Q
+│   ├── test_shear_lag_distribution.py   M3 tests R–Y
+│   ├── test_shear_lag_limits.py         M3 tests Z–AH
+│   ├── test_adhesive_margins.py         M3 tests AI–AO
+│   ├── test_shear_lag_inverse.py        M3 tests AP–AW
+│   ├── test_milestone_integration.py    M3 tests AX–BC (M1/M2 regression)
+│   └── test_shear_lag_sensitivity.py    M3 tests BD–BI
 └── examples/
     ├── bimetallic_joint_sanity.py       M1 free-joint sanity study
-    └── restraint_sensitivity.py         M2 restraint study
+    ├── restraint_sensitivity.py         M2 restraint study
+    └── adhesive_shear_lag.py            M3 adhesive shear-lag study
 ```
 
 The model is pure Python standard library — the closed-form Milestone 1
@@ -635,6 +1008,12 @@ Run the Milestone 2 restraint study:
 
 ```bash
 python examples/restraint_sensitivity.py
+```
+
+Run the Milestone 3 adhesive shear-lag study:
+
+```bash
+python examples/adhesive_shear_lag.py
 ```
 
 The tests and the example both insert `src/` on `sys.path`, so they also run
