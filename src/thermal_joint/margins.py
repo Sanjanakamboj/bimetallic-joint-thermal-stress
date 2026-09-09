@@ -18,12 +18,33 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
+from typing import Protocol, runtime_checkable
 
 from ._validation import require_finite
-from .joint import ThermalJointResult
 from .materials import AxialMember, ThermoelasticMaterial
 
-__all__ = ["YieldBasis", "MemberYieldMargin", "JointYieldAssessment", "assess_yield"]
+__all__ = [
+    "YieldBasis",
+    "MemberYieldMargin",
+    "JointYieldAssessment",
+    "MemberStressState",
+    "assess_yield",
+]
+
+
+@runtime_checkable
+class MemberStressState(Protocol):
+    """Anything carrying a signed axial stress for each of the two members.
+
+    Both :class:`~thermal_joint.joint.ThermalJointResult` (Milestone 1, free
+    joint) and
+    :class:`~thermal_joint.restraint.RestrainedThermalJointResult`
+    (Milestone 2, externally restrained) satisfy this, so the yield-margin
+    machinery is written once and reused unchanged by both.
+    """
+
+    member_1_stress: float
+    member_2_stress: float
 
 
 @dataclass(frozen=True)
@@ -134,7 +155,7 @@ class JointYieldAssessment:
 
 
 def assess_yield(
-    result: ThermalJointResult,
+    result: MemberStressState,
     member_1: AxialMember,
     member_2: AxialMember,
     basis: YieldBasis | None = None,
@@ -144,7 +165,10 @@ def assess_yield(
     Parameters
     ----------
     result:
-        Solved :class:`~thermal_joint.joint.ThermalJointResult`.
+        Any solved result exposing ``member_1_stress`` and ``member_2_stress``:
+        a Milestone 1 :class:`~thermal_joint.joint.ThermalJointResult` or a
+        Milestone 2
+        :class:`~thermal_joint.restraint.RestrainedThermalJointResult`.
     member_1, member_2:
         The same members used to produce ``result``, in the same order.
     basis:
