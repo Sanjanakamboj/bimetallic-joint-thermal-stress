@@ -17,10 +17,19 @@ metallic members subjected to hot and cold temperature excursions.
   bonded overlap: how the Milestone 1 mismatch force is actually transferred,
   what adhesive shear results, allowable temperature excursion, and
   minimum-overlap inverse design.
+- **Milestone 4** — a bounded preliminary design trade over the verified
+  mechanics: analytical asymptote scaling, six one-variable sensitivity sweeps,
+  inverse sizing for bond width / adhesive thickness / adhesive modulus, a
+  bounded width × thickness design map, and a deterministic selection policy.
 
 > **Milestone 3 is a one-dimensional adhesive shear-lag screening model. It does
 > not calculate peel stress, edge singularities, adhesive fracture, nonlinear
 > response or finite-element joint stresses.**
+
+> **Milestone 4 does not optimize a flight joint. It uses the verified
+> one-dimensional shear-lag equations to identify feasible first-order
+> combinations of bond width and adhesive compliance within explicitly bounded
+> design spaces.**
 
 Later milestones will extend the physics; see [Limitations](#limitations) for
 everything deliberately excluded so far.
@@ -40,6 +49,10 @@ everything deliberately excluded so far.
 > **Milestone 3.** If the free-joint CTE-mismatch force must be transferred
 > through a finite bonded overlap, what axial-force distribution and adhesive
 > shear stress develop along that overlap?
+
+> **Milestone 4.** Given that overlap length alone cannot recover the failing
+> canonical bondline, which physically meaningful first-order design levers
+> *can*?
 
 The primary deliverable of the overall project is a thermal stress calculation
 plus a margin at the temperature extremes. Each milestone builds and
@@ -614,6 +627,210 @@ honestly: this illustrative joint is limited by its bondline, not by its metal.
 
 ---
 
+## Milestone 4 — bounded bondline design trade
+
+> **Not an optimization.** This milestone evaluates explicitly bounded grids
+> with the verified equations and applies one stated selection rule. It does not
+> search a design space, and it makes no claim of global optimality.
+
+### Why overlap length alone could not recover the design
+
+Milestone 3's peak shear is `tau_peak = tau_inf coth(beta L_b)`. Once the
+overlap spans more than a few transfer lengths, `coth → 1` and the peak sits on
+the long-overlap asymptote `tau_inf`, which does **not** contain `L_b` at all.
+At the canonical geometry `lambda = 6.12`, so `coth = 1.00001` — the overlap was
+already asymptotic, and the remaining 66.386 MPa is untouchable by more bonded
+length.
+
+### Long-overlap asymptotic scaling
+
+Substituting the Milestone 1 demand `N_t = d_eps / C` into `tau_inf = |N_t| beta / b`:
+
+```
+tau_inf = |d_eps| * sqrt( G_a / (b * t_a * C) )
+```
+
+| lever | exponent on `tau_inf` | cost to halve `tau_inf` |
+|---|---|---|
+| bond width `b` | **−1/2** (*not* `1/b`) | 4× wider |
+| adhesive thickness `t_a` | −1/2 | 4× thicker |
+| adhesive modulus `G_a` | +1/2 | 4× softer |
+| `|dT|` and `|alpha_1 − alpha_2|` | +1 | 2× smaller |
+| adherend compliance `C` | −1/2 | (stiffer adherends make it *worse*) |
+
+Every exponent is verified to 12 decimal places in the tests. The width law is
+the important trap: widening the bond also **raises** `beta`, so the naive
+`tau_peak ∝ 1/b` is wrong — the true asymptotic law is `b^(-1/2)`.
+
+Because every geometric lever sits under a square root, **halving the peak shear
+costs a factor of four** in width, thickness or modulus. Only the thermal and
+CTE levers are first order.
+
+### Monotonicity and the uniform-shear floor
+
+Writing `tau_peak = |N_t| f(beta) / b` with `f(u) = u coth(u L_b)`, and using
+`sinh(2y)/2 > y`, `f` is **strictly increasing in `beta`**. Hence `tau_peak`
+strictly falls with thickness and width, and strictly rises with modulus — all
+three established analytically before any bisection runs.
+
+As `beta → 0` (a very thick or very soft bondline) `f(beta) → 1/L_b`, so
+
+```
+tau_peak  ->  |N_t| / (b L_b)  =  tau_avg          the uniform-shear FLOOR
+```
+
+This floor is the key structural result of Milestone 4. **Thickness and modulus
+are both bounded below by it**: if `tau_avg` already exceeds the allowable, no
+bondline — however thick or compliant — can pass, and
+`required_adhesive_thickness` / `maximum_allowable_adhesive_shear_modulus`
+return `no_finite_thickness_within_model` / `no_finite_modulus_within_model`
+rather than searching. **Bond width has no floor**, because `tau_avg` itself
+falls as `1/b`. That makes width the only unconditionally effective single
+lever in this model.
+
+Canonically `tau_avg = 10.855 MPa` against a 20 MPa allowable, so thickness and
+modulus do both have finite answers here.
+
+### Sensitivity sweeps
+
+All six sweeps are deterministic, build copies rather than mutating the shipped
+records, and compute both extremes at every point (cold governs throughout,
+computed from the margins).
+
+| sweep | range | result |
+|---|---|---|
+| bond width | 10 → 100 mm | 93.92 → 29.69 MPa, **all FAIL** |
+| adhesive thickness | 0.05 → 1.5 mm | 132.77 → 24.80 MPa, **all FAIL** |
+| adhesive modulus | 5.0 → 0.05 GPa | 148.44 → 16.90 MPa, only 0.05 GPa passes |
+| area ratio `A_1/A_2` | 0.25 → 4 | 39.44 → 90.22 MPa, all FAIL |
+| excursion `|dT|` | 20 → 160 K | 9.48 → 75.87 MPa, passes to 40 K |
+| CTE mismatch scale | 0 → 1.5 | 0 → 99.58 MPa, passes to ×0.25 |
+
+Two findings worth stating plainly:
+
+- **Equal areas are not optimal for adhesive shear.** Shrinking the
+  aluminium-like member to `A_1/A_2 = 0.25` cuts peak shear from 66.39 to
+  39.44 MPa, because it lowers the Milestone 1 mismatch force faster than it
+  raises `beta`. It also cuts the yield margin from +1.487 to +0.762 — the two
+  screens pull in opposite directions, which is exactly why they are reported
+  separately.
+- **The thermal sweep crosses PASS→FAIL between 40 K and 60 K**, bracketing the
+  closed-form allowable of 42.18 K from Milestone 3.
+
+### Inverse sizing
+
+Each utility sizes one lever against the governing extreme by deterministic
+bounded bisection, after settling feasibility analytically. Bounds, tolerance
+and iteration cap are explicit and **never expanded silently**.
+
+| utility | canonical result | status |
+|---|---|---|
+| `required_bond_width` | **220.35 mm** (11.02× the 20 mm baseline) | `finite_required_width` |
+| `required_adhesive_thickness` | **2.499 mm** (12.49× the 0.2 mm baseline) | `finite_required_thickness` |
+| `maximum_allowable_adhesive_shear_modulus` | **0.0800 GPa** (12.49× softer) | `finite_maximum_modulus` |
+
+All three demand essentially the same factor on the group `G_a / (b t_a)`,
+because the asymptote depends on nothing else. Each is individually extreme — a
+220 mm bond, a 2.5 mm bondline, or an 80 MPa-class adhesive. **These are
+model-based screening values, not allowables.**
+
+Status vocabularies are explicit: `lower_bound_already_passes`,
+`finite_required_*`, `no_boundary_within_search_bounds`, plus
+`no_finite_thickness_within_model` / `no_finite_modulus_within_model` where the
+uniform-shear floor makes the lever useless, and
+`upper_bound_already_passes` / `lower_bound_already_fails` for the modulus
+search, whose boundary is a **maximum** rather than a minimum.
+
+### Design-factor sensitivity
+
+Required width scales as `1/tau_allow²`, so the design basis drives the sizing
+hard:
+
+| design factor | `tau_allow` | cold margin | required width |
+|---|---|---|---|
+| 1.0 | 25.00 MPa | −0.623 | 141.03 mm |
+| 1.25 | 20.00 MPa | −0.699 | 220.35 mm |
+| 1.5 | 16.67 MPa | −0.749 | 317.31 mm |
+| 2.0 | 12.50 MPa | −0.812 | 564.11 mm |
+
+Doubling the factor quadruples the bond width. The factor lives in
+`AdhesiveShearBasis`, never inside the adhesive record.
+
+### Bounded width × thickness design map
+
+Widths 10–100 mm × thicknesses 0.1–1.0 mm, 42 points, canonical adhesive
+(`G_a = 1.0 GPa`, 25 MPa strength, DF 1.25). Cold peak shear [MPa], `*` = passes
+both screens:
+
+| `b` \ `t_a` | 0.10 | 0.20 | 0.30 | 0.50 | 0.75 | 1.00 |
+|---|---|---|---|---|---|---|
+| **10 mm** | 132.77 | 93.92 | 76.79 | 59.88 | 49.61 | 43.78 |
+| **20 mm** | 93.88 | 66.39 | 54.21 | 42.02 | 34.41 | 29.94 |
+| **30 mm** | 76.66 | 54.20 | 44.26 | 34.29 | 28.02 | 24.30 |
+| **40 mm** | 66.39 | 46.94 | 38.33 | 29.69 | 24.25 | 21.01 |
+| **50 mm** | 59.38 | 41.99 | 34.28 | 26.56 | 21.68 | **18.78\*** |
+| **75 mm** | 48.48 | 34.28 | 27.99 | 21.68 | **17.70\*** | **15.33\*** |
+| **100 mm** | 41.99 | 29.69 | 24.24 | **18.78\*** | **15.33\*** | **13.28\*** |
+
+**6 of 42 points are feasible** — co-design works where neither single lever
+did. A second illustrative map at `G_a = 0.1 GPa` opens **32 of 42**; the
+canonical adhesive is not replaced by that variant, it is shown alongside purely
+to demonstrate the effect.
+
+### Preliminary design policy and selected point
+
+Policy `minimum_bond_area`, applied in order:
+
+1. must pass member yield **and** adhesive shear at both extremes
+2. smallest bond area (= width × overlap; the overlap is fixed, so this is the
+   narrowest bond)
+3. tie-break: smaller adhesive thickness
+4. tie-break: larger adhesive margin
+5. tie-break: earlier position in the grid
+
+| | baseline | selected |
+|---|---|---|
+| bond width | 20.00 mm | **50.00 mm** |
+| adhesive thickness | 0.20 mm | **1.00 mm** |
+| bond area | 800 mm² | 2000 mm² |
+| hot peak shear | 47.42 MPa | 13.42 MPa |
+| cold peak shear | 66.39 MPa | 18.78 MPa |
+| hot adhesive margin | −0.578 | **+0.491** |
+| cold adhesive margin | −0.699 | **+0.065** |
+| member yield margin | +1.487 | +1.487 |
+| overall feasible | `False` | **`True`** |
+
+> **The selected point is a preliminary feasible point within the bounded study
+> grid, not an optimized flight-joint design.**
+
+A thinner adhesive is not automatically better for manufacturing or durability,
+and a wider bond is not automatically worse. Bond area and adhesive volume are
+reported as **geometric diagnostics only** — no adhesive density is supplied, so
+no adhesive mass is computed or implied, and bond width is not a mass metric.
+
+### Engineering interpretation
+
+- **Why overlap failed.** Past a few transfer lengths peak shear is set by the
+  long-overlap asymptote, which does not contain the overlap length.
+- **Width.** Widening the bond lowers force-transfer intensity, but it also
+  raises `beta`; the net asymptotic law is `b^(-1/2)`, not `1/b`.
+- **Adhesive thickness.** A thicker bondline is more compliant, lowers `beta`
+  and spreads transfer over a longer distance — down to the uniform-shear floor.
+- **Adhesive modulus.** A softer adhesive spreads transfer the same way, but may
+  introduce deformation, creep and durability problems this model cannot see.
+- **Co-design.** A width or compliance change that is insufficient alone becomes
+  effective in combination: neither 50 mm nor 1.0 mm passes by itself, but
+  together they do.
+- **Metal versus adhesive.** The Milestone 1 metals pass comfortably while the
+  Milestone 3 baseline bondline fails. These are distinct margins against
+  distinct allowables and must stay separately visible; only the booleans are
+  ANDed.
+- **Model caution.** The model predicts its largest shear at the free edge —
+  exactly where the omitted peel stress and edge singularity matter most. A
+  passing screening margin here is necessary, not sufficient.
+
+---
+
 ## API and result structures
 
 | Object | Purpose |
@@ -660,6 +877,23 @@ Milestone 3 additions (again purely additive):
 | `allowable_temperature_change_for_adhesive_shear(...)` | closed-form `|dT|_allow` [K] |
 | `required_overlap_length(...)` | → `RequiredOverlapResult` with an `OverlapLimitStatus` |
 | `screen_joint(...)` | → `PreliminaryScreeningResult` (yield AND adhesive) |
+
+Milestone 4 additions (purely additive; no Milestone 1–3 module was touched):
+
+| Object | Purpose |
+|---|---|
+| `long_overlap_peak_shear(...)` | analytic `tau_inf` for a whole configuration |
+| `uniform_shear_floor(...)` | `|N_t| / (b L_b)` — the `beta → 0` floor |
+| `JointDesignCandidate` | one evaluated configuration; yield and adhesive margins side by side, plus `bond_area` and `adhesive_volume` |
+| `evaluate_joint_design(...)` | → `JointDesignCandidate` at both extremes |
+| `SensitivityPoint` | one point of a sweep whose variable is not a bondline dimension |
+| `bond_width_sensitivity(...)`, `adhesive_thickness_sensitivity(...)`, `adhesive_modulus_sensitivity(...)` | → tuples of `JointDesignCandidate` |
+| `area_ratio_sensitivity(...)`, `thermal_excursion_sensitivity(...)`, `cte_mismatch_sensitivity(...)` | → tuples of `SensitivityPoint` |
+| `required_bond_width(...)` | → `RequiredBondWidthResult` with a `BondWidthStatus` |
+| `required_adhesive_thickness(...)` | → `RequiredAdhesiveThicknessResult` with an `AdhesiveThicknessStatus` |
+| `maximum_allowable_adhesive_shear_modulus(...)` | → `MaximumAdhesiveModulusResult` with an `AdhesiveModulusStatus` |
+| `width_thickness_design_map(...)` | bounded grid → tuple of candidates, row-major |
+| `select_preliminary_joint_design(...)` | one candidate or `None`, under `DesignSelectionPolicy` |
 
 ### Minimal usage
 
@@ -726,6 +960,27 @@ sizing = required_overlap_length(
     *joint, environment, overlap, adhesive, AdhesiveShearBasis(1.25)
 )
 print(sizing.status.value)
+```
+
+### Milestone 4 usage
+
+```python
+from thermal_joint import (
+    required_bond_width, select_preliminary_joint_design, width_thickness_design_map,
+)
+
+sizing = required_bond_width(
+    *joint, environment, overlap, adhesive, AdhesiveShearBasis(1.25)
+)
+print(sizing.status.value, sizing.required_bond_width)
+
+grid = width_thickness_design_map(
+    *joint, environment, overlap, adhesive,
+    bond_widths=[0.010, 0.020, 0.050, 0.100],
+    adhesive_thicknesses=[0.0001, 0.0005, 0.0010],
+    yield_basis=YieldBasis(1.25), adhesive_basis=AdhesiveShearBasis(1.25),
+)
+selected = select_preliminary_joint_design(grid)   # a candidate, or None
 ```
 
 ---
@@ -873,8 +1128,36 @@ Milestone 3 adds, again in the same spirit:
 - **sweeps are non-mutating** — the shipped members, geometry and adhesive are
   asserted unchanged after every sensitivity sweep
 
-The suite currently has **723 passing tests** — the 276 Milestone 1 and 258
-Milestone 2 tests, unchanged and still green, plus 189 Milestone 3 tests.
+Milestone 4 adds:
+
+- **power-law exponents measured, not asserted** — every asymptotic exponent is
+  recovered numerically from a factor change and checked to 1e-12
+- **the width trap is tested explicitly** — `b^(-1/2)` is confirmed *and* the
+  naive `1/b` scaling is asserted to be wrong
+- **monotonicity before bisection** — each sweep is asserted monotone in the
+  direction the derivation predicts, so every inverse search is well posed
+- **the uniform-shear floor** — verified as the `beta → 0` limit with a
+  1 kPa-modulus adhesive, and shown to trigger
+  `no_finite_thickness_within_model` on a 5 mm-wide bond
+- **inverse round trips** — each returned boundary gives `MS ≈ 0`, fails just
+  inside and passes just outside; the required width is separately checked
+  against a closed-form asymptotic estimate
+- **all statuses exercised**, including the two bracket-too-narrow cases
+- **selection determinism and order-independence** — the map is shuffled and
+  reversed and yields the same pick; the thickness tie-break is tested at equal
+  bond area against a candidate with a *larger* margin, proving the stated
+  policy order is what actually runs
+- **`None` on infeasibility** — a grid with no feasible point returns nothing
+  rather than a best-effort pick
+- **no mass invented** — the candidate is asserted to expose no mass or density
+  attribute, and no combined margin attribute
+- **prior milestones re-asserted** from Milestone 4 test files: M1 stresses and
+  margins, M2 restrained results, crossing and restraint boundary, M3 baseline
+  shear-lag and `no_finite_length_within_model`
+
+The suite currently has **824 passing tests** — the 276 Milestone 1, 258
+Milestone 2 and 189 Milestone 3 tests, unchanged and still green, plus 101
+Milestone 4 tests.
 
 ---
 
@@ -895,6 +1178,21 @@ mismatch force is fully developed and asks the overlap to carry all of it. Peak
 shear at a free edge is exactly where a real bondline is least well represented
 by a 1-D model — peel stress and the edge singularity, both excluded here, act
 in the same place.
+
+### Milestone 4 (design trade)
+
+Bounded design trade only · no adhesive mass model unless a density with
+provenance is supplied · no manufacturability constraint · no minimum or maximum
+practical bondline thickness · no adhesive cure or process limits · no
+compliance-durability model · no creep · no fatigue · no fracture · no peel · no
+edge singularity · no thermal-property variation · no environmental degradation
+· illustrative adhesive properties · **inverse results are model-based screening
+values, not allowables** · no claim of global optimality
+
+The selected point is a preliminary feasible point within the bounded study
+grid, not an optimized flight-joint design. A 2.5 mm bondline or a 220 mm bond
+may be perfectly reasonable arithmetic and quite unreasonable hardware; this
+model has no way to tell.
 
 ### Global model
 
@@ -943,7 +1241,9 @@ design allowables.
 │   ├── shear_lag.py         M3: beta, closed-form distributions, peak/average
 │   ├── shear_lag_extremes.py   M3: hot/cold adhesive shear assessment
 │   ├── shear_lag_inverse.py    M3: allowable dT and minimum overlap
-│   └── screening.py         M3: combined yield AND adhesive feasibility
+│   ├── screening.py         M3: combined yield AND adhesive feasibility
+│   ├── design_trade.py      M4: scaling, sweeps, design map, selection policy
+│   └── design_inverse.py    M4: width / thickness / modulus inverse sizing
 ├── tests/
 │   ├── conftest.py                      makes src/ importable without install
 │   ├── reference_solution.py            independent closed-form check
@@ -971,11 +1271,17 @@ design allowables.
 │   ├── test_adhesive_margins.py         M3 tests AI–AO
 │   ├── test_shear_lag_inverse.py        M3 tests AP–AW
 │   ├── test_milestone_integration.py    M3 tests AX–BC (M1/M2 regression)
-│   └── test_shear_lag_sensitivity.py    M3 tests BD–BI
+│   ├── test_shear_lag_sensitivity.py    M3 tests BD–BI
+│   ├── design_cases.py                  M4 canonical fixtures
+│   ├── test_design_scaling.py           M4 tests A–F
+│   ├── test_design_sensitivity.py       M4 tests G–AE
+│   ├── test_design_inverse.py           M4 tests AF–AW
+│   └── test_design_map_and_selection.py M4 tests AX–BM
 └── examples/
     ├── bimetallic_joint_sanity.py       M1 free-joint sanity study
     ├── restraint_sensitivity.py         M2 restraint study
-    └── adhesive_shear_lag.py            M3 adhesive shear-lag study
+    ├── adhesive_shear_lag.py            M3 adhesive shear-lag study
+    └── joint_design_trade.py            M4 bondline design trade
 ```
 
 The model is pure Python standard library — the closed-form Milestone 1
@@ -1014,6 +1320,12 @@ Run the Milestone 3 adhesive shear-lag study:
 
 ```bash
 python examples/adhesive_shear_lag.py
+```
+
+Run the Milestone 4 bondline design trade:
+
+```bash
+python examples/joint_design_trade.py
 ```
 
 The tests and the example both insert `src/` on `sys.path`, so they also run

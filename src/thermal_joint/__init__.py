@@ -19,6 +19,12 @@ adhesive shear-lag screen for a finite bonded overlap
 and minimum-overlap inverse design. The shear-lag demand is imported from the
 Milestone 1 free-joint solution, never re-derived.
 
+Milestone 4 adds a bounded preliminary *design trade* on top of those verified
+mechanics: analytical asymptote scaling, one-variable sensitivity sweeps,
+inverse sizing for bond width, adhesive thickness and adhesive shear modulus, a
+bounded width x thickness design map, and a deterministic selection policy. It
+does not optimize a flight joint.
+
 SI units throughout: E [Pa], alpha [1/K], area [m^2], stress [Pa], force [N],
 strain [-]. Temperature differences may be K or degC increments.
 
@@ -28,6 +34,33 @@ Sign convention: tension positive, compression negative, positive dT = heating.
 from __future__ import annotations
 
 from .adhesive import AdhesiveMaterial, AdhesiveShearBasis, BondedOverlapGeometry
+from .design_inverse import (
+    AdhesiveModulusStatus,
+    AdhesiveThicknessStatus,
+    BondWidthStatus,
+    MaximumAdhesiveModulusResult,
+    RequiredAdhesiveThicknessResult,
+    RequiredBondWidthResult,
+    maximum_allowable_adhesive_shear_modulus,
+    required_adhesive_thickness,
+    required_bond_width,
+)
+from .design_trade import (
+    DesignSelectionPolicy,
+    JointDesignCandidate,
+    SensitivityPoint,
+    adhesive_modulus_sensitivity,
+    adhesive_thickness_sensitivity,
+    area_ratio_sensitivity,
+    bond_width_sensitivity,
+    cte_mismatch_sensitivity,
+    evaluate_joint_design,
+    long_overlap_peak_shear,
+    select_preliminary_joint_design,
+    thermal_excursion_sensitivity,
+    uniform_shear_floor,
+    width_thickness_design_map,
+)
 from .environment import ThermalEnvironment
 from .extremes import TemperatureExtremeAssessment, assess_temperature_extremes
 from .inverse import (
@@ -126,6 +159,30 @@ __all__ = [
     "solve_shear_lag",
     "thermal_mismatch_strain",
     "transfer_length",
+    # Milestone 4 - bounded preliminary design trade
+    "AdhesiveModulusStatus",
+    "AdhesiveThicknessStatus",
+    "BondWidthStatus",
+    "DesignSelectionPolicy",
+    "JointDesignCandidate",
+    "MaximumAdhesiveModulusResult",
+    "RequiredAdhesiveThicknessResult",
+    "RequiredBondWidthResult",
+    "SensitivityPoint",
+    "adhesive_modulus_sensitivity",
+    "adhesive_thickness_sensitivity",
+    "area_ratio_sensitivity",
+    "bond_width_sensitivity",
+    "cte_mismatch_sensitivity",
+    "evaluate_joint_design",
+    "long_overlap_peak_shear",
+    "maximum_allowable_adhesive_shear_modulus",
+    "required_adhesive_thickness",
+    "required_bond_width",
+    "select_preliminary_joint_design",
+    "thermal_excursion_sensitivity",
+    "uniform_shear_floor",
+    "width_thickness_design_map",
 ]
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
