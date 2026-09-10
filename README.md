@@ -490,7 +490,7 @@ will render slightly different bytes while plotting identical data.
 
 ## 13 · License
 
-Released under the [MIT License](LICENSE). Copyright (c) 2026 Sanjana.
+Released under the [MIT License](LICENSE). Copyright (c) 2026 Sanjana Kamboj.
 
 The licence covers the **code**. It does not turn any number in this repository
 into a design allowable: the material properties, adhesive properties, fatigue
