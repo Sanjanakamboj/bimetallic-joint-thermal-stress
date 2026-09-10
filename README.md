@@ -1,1607 +1,455 @@
 # Bimetallic Joint Thermal Stress
 
-Thermal-stress analysis of a spacecraft radiator joint made from two dissimilar
-metallic members subjected to hot and cold temperature excursions.
+**Thermal-stress, adhesive load-transfer and thermal-cycle fatigue screening for a
+dissimilar-metal spacecraft radiator joint.**
 
-**Status: Milestone 3 of an ongoing portfolio project — not complete.**
+> How do CTE mismatch, external restraint, adhesive load transfer, bondline
+> geometry and repeated thermal cycling interact in a dissimilar-metal
+> spacecraft joint?
 
-- **Milestone 1** — the verified mechanics foundation: closed-form axial thermal
-  stress in a perfectly bonded two-member joint under a uniform temperature
-  change, preliminary elastic yield margins, hot/cold extreme evaluation.
-- **Milestone 2** — finite external axial restraint from the surrounding
-  structure, the rigid-restraint limit, restraint sensitivity, and a
-  preliminary inverse-design search for the maximum tolerable restraint
-  stiffness. The Milestone 1 free-joint solution is preserved *exactly* as the
-  zero-restraint limit.
-- **Milestone 3** — a one-dimensional adhesive shear-lag screen for a finite
-  bonded overlap: how the Milestone 1 mismatch force is actually transferred,
-  what adhesive shear results, allowable temperature excursion, and
-  minimum-overlap inverse design.
-- **Milestone 4** — a bounded preliminary design trade over the verified
-  mechanics: analytical asymptote scaling, six one-variable sensitivity sweeps,
-  inverse sizing for bond width / adhesive thickness / adhesive modulus, a
-  bounded width × thickness design map, and a deterministic selection policy.
-- **Milestone 5** — a first-order thermal-cycle fatigue screen: stress cycles
-  from the hot/cold endpoints, illustrative Basquin S-N curves, per-component
-  life margins, an integrated static-plus-fatigue assessment, and bounded
-  fatigue sensitivity and design studies.
+A self-contained analytical study in pure Python (standard library only; the
+model itself needs no NumPy). Every result below is recomputed from the code by
+`examples/final_thermal_joint_assessment.py`, and 938 tests verify the mechanics
+against independent closed forms, limiting cases and scaling laws.
 
-> **Milestone 3 is a one-dimensional adhesive shear-lag screening model. It does
-> not calculate peel stress, edge singularities, adhesive fracture, nonlinear
-> response or finite-element joint stresses.**
-
-> **Milestone 4 does not optimize a flight joint. It uses the verified
-> one-dimensional shear-lag equations to identify feasible first-order
-> combinations of bond width and adhesive compliance within explicitly bounded
-> design spaces.**
-
-> **Milestone 5 is a first-order constant-amplitude fatigue screen against
-> illustrative S-N curves. It is not certification life. No crack growth,
-> fracture mechanics, rainflow counting, Miner summation, peel fatigue,
-> multiaxial fatigue, plastic-strain fatigue, creep-fatigue interaction or
-> statistical scatter is included, and no mean-stress correction is applied.**
-
-Later milestones will extend the physics; see [Limitations](#limitations) for
-everything deliberately excluded so far.
+> ⚠️ **All material properties, adhesive properties, fatigue curves and design
+> requirements in this project are ILLUSTRATIVE and are NOT design allowables.**
+> No alloy, adhesive product or S-N dataset is claimed. This is a preliminary
+> screening study, not a certified joint design.
 
 ---
 
-## Objective
+## Key result
 
-> **Milestone 1.** If two dissimilar members are bonded so that they must
-> undergo the same axial strain, what common strain, internal force, and thermal
-> stress develop when their coefficients of thermal expansion differ?
+An aluminium-like / titanium-like bonded joint over a −120 °C to +120 °C
+excursion. The metal is never the problem; **the bondline is**, and passing the
+static shear screen turned out not to be enough.
 
-> **Milestone 2.** How much do those stresses increase when the bonded pair is
-> not perfectly free to expand, but is attached to surrounding spacecraft
-> structure with finite axial stiffness?
+| Design | Bondline | Static adhesive shear | Metal yield | 10 000-cycle fatigue | Integrated |
+|---|---|---|---|---|---|
+| **M3 baseline** | 20 mm × 0.2 mm | **FAIL** (MS −0.699) | PASS (+1.487) | **FAIL** (ratio 1.4e−4) | **FAIL** |
+| **M4 static-selected** | 50 mm × 1.0 mm | PASS (MS +0.065) | PASS (+1.487) | **FAIL** (ratio 0.644) | **FAIL** |
+| **M5 fatigue-selected** | 30 mm × 2.0 mm | PASS (MS +0.147) | PASS (+1.487) | **PASS** (ratio 1.055) | **PASS** |
 
-> **Milestone 3.** If the free-joint CTE-mismatch force must be transferred
-> through a finite bonded overlap, what axial-force distribution and adhesive
-> shear stress develop along that overlap?
+Three findings drive the study:
 
-> **Milestone 4.** Given that overlap length alone cannot recover the failing
-> canonical bondline, which physically meaningful first-order design levers
-> *can*?
+1. **The metals pass comfortably.** The free joint gives ±86.84 MPa at the cold
+   extreme, a minimum yield margin of **+1.487**. Cold governs.
+2. **Overlap length alone cannot fix the bondline.** Peak adhesive shear
+   converges on a finite asymptote (66.386 MPa) that already exceeds the 20 MPa
+   allowable, so `required_overlap_length` returns
+   `no_finite_length_within_model` — no overlap, however long, works.
+3. **Static feasibility did not imply fatigue feasibility.** The statically
+   acceptable 50 mm × 1.0 mm bondline reaches only **6439 cycles** against
+   10 000 required.
 
-> **Milestone 5.** The bondline can be made statically feasible — but can
-> repeated hot/cold thermal cycling still make the metal or the adhesive
-> fatigue-critical?
+External restraint adds a fourth: it can *reverse* a member's stress sign, and
+past `eta_r ≈ 13.74` it drives the aluminium-like member to its yield allowable
+— so the metal can become limiting after all.
 
-The primary deliverable of the overall project is a thermal stress calculation
-plus a margin at the temperature extremes. Each milestone builds and
-independently verifies the mechanics that answer its question.
-
-**Global versus local.** Milestones 1 and 2 are *global*: they determine the
-CTE-mismatch force the joint carries, with and without external restraint.
-Milestone 3 is *local*: it takes that force as its demand and asks how it is
-transferred through a finite bonded overlap. The shear-lag layer imports the
-Milestone 1 member force directly from `solve_bimetallic_joint` and never
-re-derives it, so the two levels cannot drift apart.
+![Static versus fatigue](figures/fig4_static_versus_fatigue.png)
 
 ---
 
-## Assumptions
+## Engineering workflow
 
-The model is one-dimensional axial compatibility:
+```
+free bimetallic thermal compatibility     ->  member stress from CTE mismatch alone
+  -> finite surrounding-structure restraint  ->  sign changes, stress amplification
+  -> finite-overlap adhesive shear-lag       ->  how that force actually transfers
+  -> bounded bondline design trade           ->  which levers recover feasibility
+  -> repeated thermal-cycle fatigue screen   ->  does it survive the cycling
+  -> final integrated assessment
+```
 
-- two members, **perfectly bonded**, so both undergo the same total axial strain
-- **uniform temperature** throughout both members
-- a **common stress-free reference state** `T_ref` for both members
-- **linear elasticity**, isotropic, temperature-independent properties
-- no bending, no interface slip, no adhesive compliance, no thermal gradient
-
-Because both members share the same reference length, length cancels out of the
-compatibility equation and is deliberately not modelled.
-
-One Milestone 1 assumption is **relaxed in Milestone 2**:
-
-- Milestone 1 assumed **no external axial force**, so the members were
-  self-equilibrating (`N_1 + N_2 = 0`).
-- Milestone 2 adds a **single linear external axial restraint** of finite
-  stiffness. The restraint is linear and elastic — no contact, slip, backlash
-  or nonlinear springs.
+Each layer consumes the verified output of the one above it and adds no new
+physics of its own. The shear-lag demand is taken *directly* from the
+free-joint solver rather than re-derived, so the levels cannot drift apart.
 
 ---
 
-## Units and sign conventions
+## 1 · Thermal compatibility
 
-SI units are used internally:
+Two dissimilar members bonded so they share one axial strain, uniform
+temperature, no external load, linear elasticity.
 
-| Quantity | Symbol | Unit |
+```
+eps_th,i   = alpha_i dT
+eps_common = (E1 A1 alpha1 + E2 A2 alpha2) / (E1 A1 + E2 A2) * dT
+sigma_i    = E_i (eps_common - alpha_i dT)
+N_i        = sigma_i A_i           with   N_1 + N_2 = 0
+```
+
+**Sign convention** (used everywhere): tension positive, compression negative,
+`dT > 0` is heating, positive `alpha` expands on heating.
+
+Illustrative inputs — aluminium-like: E 70 GPa, α 23e−6/K, yield 270 MPa;
+titanium-like: E 110 GPa, α 8.5e−6/K, yield 830 MPa; 100 mm² each;
+T_ref +20 °C, T_cold −120 °C, T_hot +120 °C; yield design factor 1.25.
+
+| | Hot (+100 K) | Cold (−140 K) |
 |---|---|---|
-| Young's modulus | `E` | Pa |
-| Thermal expansion coefficient | `alpha` | 1/K |
-| Cross-sectional area | `A` | m² |
-| Strain | `eps` | – |
-| Stress | `sigma` | Pa |
-| Internal force | `N` | N |
-| Temperature change | `dT` | K (or °C increment) |
+| σ aluminium-like | −62.03 MPa (compression) | **+86.84 MPa** (tension) |
+| σ titanium-like | +62.03 MPa (tension) | −86.84 MPa (compression) |
+| minimum yield margin | +2.482 | **+1.487** |
 
-Sign conventions:
-
-- **tensile stress is positive**, compressive stress is negative
-- `dT = T - T_ref`; **positive `dT` means heating**
-- **positive `alpha` means expansion on heating**, so `alpha * dT > 0` on heating
-- `yield_strength` is stored as a **positive magnitude** and compared against `abs(sigma)`
-
-Temperature *differences* may be given in K or in °C: the increments are
-numerically identical, so no conversion is performed. Only differences enter the
-mechanics, so an entire `ThermalEnvironment` may be expressed on either scale as
-long as one scale is used consistently.
+The high-CTE member wants to expand more, so the bond restrains it into
+compression on heating and tension on cooling. **Cold governs**, because
+|−140 K| > |+100 K|.
 
 ---
 
-## Governing equations
+## 2 · External restraint
 
-**Free (unrestrained) thermal strain** of member `i`:
-
-```
-eps_th_i = alpha_i * dT
-```
-
-**Compatibility** (perfect bond):
+The surrounding structure is one linear axial spring of stiffness `K_r` [N]
+(force per unit strain — an equivalent `EA`, not an N/m translational
+stiffness).
 
 ```
-eps_1 = eps_2 = eps_common
+eta_r      = K_r / (E1 A1 + E2 A2)
+eps_common = (E1 A1 alpha1 dT + E2 A2 alpha2 dT + K_r eps_ref)
+             / (E1 A1 + E2 A2 + K_r)
 ```
 
-**Constitutive relation** — stress arises only from the difference between the
-enforced total strain and the free thermal strain:
+The denominator is a **sum** of stiffnesses, so the solution is unconditionally
+stable. `K_r = 0` recovers the free joint exactly; `K_r → ∞` drives
+`eps_common → eps_ref` (canonically 0).
 
-```
-sigma_i = E_i * (eps_common - alpha_i * dT)
-```
+![Restraint](figures/fig1_restraint_stress.png)
 
-**Axial force equilibrium** for a joint with no external axial load:
-
-```
-sigma_1 * A_1 + sigma_2 * A_2 = 0
-```
-
-Solving the three together gives the **stiffness-weighted common strain**,
-implemented directly as an exact closed form (never solved numerically):
-
-```
-              E_1 A_1 alpha_1 + E_2 A_2 alpha_2
-eps_common =  ---------------------------------  *  dT
-                    E_1 A_1 + E_2 A_2
-```
-
-**Internal forces** follow as `N_i = sigma_i * A_i`, and the model reports the
-equilibrium residual `N_1 + N_2` explicitly rather than discarding it; it is
-zero to machine precision.
-
-### Independent closed form (used for verification)
-
-The same problem can be solved for the stresses directly in terms of the CTE
-mismatch. These expressions are used in the **tests** as an independent check;
-they are never used by the production code path:
-
-```
-sigma_1 = [ E_1 E_2 A_2 / (E_1 A_1 + E_2 A_2) ] * (alpha_2 - alpha_1) * dT
-sigma_2 = [ E_1 E_2 A_1 / (E_1 A_1 + E_2 A_2) ] * (alpha_1 - alpha_2) * dT
-```
-
-### Physical reading
-
-For a high-CTE / low-CTE pair (e.g. aluminium-like vs titanium-like), on
-**heating** the high-CTE member wants to expand more, the bond restrains it, and
-it goes into **compression** while the low-CTE member goes into **tension**.
-**Cooling reverses both signs.** The tests assert these signs from the computed
-result rather than hard-coding them.
-
-Note that equilibrium requires equal and opposite *forces*, not equal and
-opposite *stresses*. In general:
-
-```
-sigma_1 / sigma_2 = -A_2 / A_1
-```
-
-which reduces to `-1` only when the areas are equal.
-
----
-
-## Representative Milestone 1 result
-
-`examples/bimetallic_joint_sanity.py` runs an illustrative equal-area joint.
-
-> **ILLUSTRATIVE MATERIAL INPUT — NOT DESIGN ALLOWABLE.** The values below are
-> clean, round, order-of-magnitude figures chosen to make the mechanics legible.
-> They are not traceable to any specific alloy, temper, product form or
-> statistical basis, so no alloy designation is claimed. The temperatures are an
-> illustrative portfolio excursion, not spacecraft qualification temperatures.
-
-| | Member 1 (aluminium-like) | Member 2 (titanium-like) |
-|---|---|---|
-| `E` | 70 GPa | 110 GPa |
-| `alpha` | 23 ×10⁻⁶ /K | 8.5 ×10⁻⁶ /K |
-| yield | 270 MPa | 830 MPa |
-| area | 100 mm² | 100 mm² |
-
-`T_ref = +20 °C`, `T_cold = -120 °C`, `T_hot = +120 °C` → `dT_cold = -140 K`,
-`dT_hot = +100 K`; yield design factor 1.25.
-
-| Quantity | Hot (`dT = +100 K`) | Cold (`dT = -140 K`) |
-|---|---|---|
-| common strain | +1413.9 µε | −1979.4 µε |
-| `sigma_1` | **−62.03 MPa** (compression) | **+86.84 MPa** (tension) |
-| `sigma_2` | **+62.03 MPa** (tension) | **−86.84 MPa** (compression) |
-| `N_1` / `N_2` | ∓6202.8 N | ±8683.9 N |
-| `N_1 + N_2` | ~1e−12 N | ~5e−12 N |
-| MS member 1 | +2.482 | **+1.487** |
-| MS member 2 | +9.705 | +6.646 |
-
-**Governing case: cold, member 1 (aluminium-like), minimum preliminary elastic
-yield margin +1.487 → PASS.** Cold governs because the cold excursion is the
-larger one (140 K vs 100 K); member 1 governs because it has by far the lower
-allowable, not because of any assumption in the code.
-
----
-
-## Milestone 2 — external axial restraint
-
-### Restraint model
-
-The surrounding structure is represented as a **single linear axial spring**
-acting on the common joint strain, with stiffness `K_r` in **newtons [N]** —
-force per unit strain, i.e. an equivalent `E*A` for the surrounding load path
-(`EA/L` if a reference length is introduced).
-
-`K_r` is deliberately **not** a translational stiffness in N/m, because this
-model defines no reference length. The restraint is force-free when
-`eps_common == reference_strain`; the canonical Milestone 2 case is
-`reference_strain = 0`, meaning the surrounding structure tends to hold the
-joint at its reference-temperature length. Nonzero reference strains are
-supported and tested.
-
-### Sign convention
-
-Member forces stay tension-positive, exactly as in Milestone 1. The restraint is
-a parallel load path carrying its own tension-positive force
-`T = K_r (eps_common - eps_ref)`, and the force it exerts **on the joint** is the
-reaction to that:
-
-```
-N_r = K_r * (reference_strain - eps_common)
-```
-
-`restraint_force` in the result is `N_r`, positive when the restraint acts on the
-joint in the tensile (positive axial) sense. Joint equilibrium is then:
-
-```
-N_1 + N_2 - N_r = 0
-```
-
-The equilibrium residual is assembled from these actual signed forces — never
-from magnitudes — and is reported, not discarded.
-
-### Closed form
-
-Substituting `sigma_i = E_i (eps - alpha_i dT)` into
-`E_1 A_1 (eps - a_1 dT) + E_2 A_2 (eps - a_2 dT) + K_r (eps - eps_ref) = 0`:
-
-```
-                 E_1 A_1 alpha_1 dT + E_2 A_2 alpha_2 dT + K_r eps_ref
-    eps_common = -----------------------------------------------------
-                            E_1 A_1 + E_2 A_2 + K_r
-```
-
-The denominator is a **sum** of non-negative stiffnesses, so it is strictly
-positive and the solution is unconditionally stable. A denominator of the form
-`E_1 A_1 + E_2 A_2 - K_r` would signal an inconsistent force-direction
-convention — that trap was audited before the model was coded.
-
-### Limits
-
-| Limit | Behaviour | Enforced by |
-|---|---|---|
-| `K_r = 0` | Exactly the Milestone 1 free-joint solution | direct regression against the Milestone 1 API |
-| `K_r -> inf` | `eps_common -> eps_ref`, `sigma_i -> E_i (eps_ref - alpha_i dT)` | large-stiffness tests against the analytic rigid form |
-
-For `eps_ref = 0` the rigid limit is the classic fully restrained result
-`sigma_i = -E_i alpha_i dT`.
-
-### The qualitative transition
-
-This is the central Milestone 2 physics result. The **free** joint is always
-self-equilibrating: one member in tension, the other in compression. A
-**strongly restrained** joint drives *both* members to the **same sign** —
-compression on heating, tension on cooling.
-
-Consequently the low-CTE member must **cross through zero stress** at some
-finite restraint level. Setting `eps_common = alpha_i dT` and solving:
-
-```
-K_r = dT * (alpha_i * K_joint - S) / (eps_ref - alpha_i * dT)
-```
-
-with `K_joint = E_1 A_1 + E_2 A_2` and `S = E_1 A_1 alpha_1 + E_2 A_2 alpha_2`.
-For `eps_ref = 0` this collapses to the **dT-independent**
-`K_r = S / alpha_i - K_joint`, exposed as
-`zero_stress_restraint_stiffness(...)`, which returns `None` when no
-admissible `K_r >= 0` exists (as for the high-CTE member, compressive both free
-and fully restrained).
-
-A direct consequence, verified rather than assumed: **matching CTEs no longer
-means zero stress.** Milestone 1's `alpha_1 = alpha_2 -> sigma = 0` result held
-*only* because the joint was externally free. Under restraint both members
-develop the same-sign restraint stress.
-
-### Restraint normalisation
-
-```
-eta_r = K_r / (E_1 A_1 + E_2 A_2)
-```
-
-`eta_r = 0` is free, `eta_r ~ 1` means the surrounding structure is about as
-axially stiff as the joint itself, and `eta_r >> 1` is strongly restrained.
-Available as `restraint_stiffness_ratio(...)`, as
-`AxialRestraint.stiffness_ratio(...)`, and as the constructor
-`AxialRestraint.from_stiffness_ratio(...)`.
-
-### Inverse design — maximum tolerable restraint
-
-`maximum_allowable_restraint_stiffness(...)` answers: *what is the largest
-restraint stiffness this joint tolerates before its minimum preliminary yield
-margin reaches zero?*
-
-Feasibility is resolved **before** any search runs, using the analytic rigid
-asymptote, and every outcome is an explicit status:
-
-| Status | Meaning |
+| | Result |
 |---|---|
-| `free_joint_already_fails` | The unrestrained joint already yields |
-| `no_finite_limit_within_model` | Even a rigid restraint stays below yield — **no number is invented** |
-| `finite_limit` | A boundary exists; returned in both `eta_r` and `K_r` |
-| `no_boundary_within_search_bounds` | A boundary exists asymptotically but above the requested bound — reported, never silently expanded |
+| `eta_r` = 1, cold σ₁ / σ₂ | +156.12 / +22.03 MPa — **both now tensile** |
+| `eta_r` = 1, minimum yield margin | +0.384 |
+| titanium-like zero-stress crossing | **`eta_r` = 0.663399** (dT-independent) |
+| metal yield boundary | **`eta_r` = 13.7405** (`K_r` = 2.4733e8 N) |
 
-When a limit exists it is found by deterministic bounded bisection on `eta_r`
-(better conditioned than `K_r`), with explicit upper bound, tolerance and
-iteration cap.
-
----
-
-## Representative Milestone 2 result
-
-Same illustrative joint, same environment, design factor 1.25.
-`K_joint = E_1 A_1 + E_2 A_2 = 1.80e7 N`; canonical restraint `eta_r = 1.0`
-(`K_r = 1.80e7 N`), `eps_ref = 0`.
-
-> **ILLUSTRATIVE** — the restraint is an *illustrative surrounding-structure
-> axial restraint*, not a measured spacecraft structural stiffness.
-
-| | Free (`eta_r = 0`) | Canonical (`eta_r = 1`) | Rigid (`eta_r -> inf`) |
-|---|---|---|---|
-| hot `sigma_1` | −62.03 MPa | −111.51 MPa | −161.00 MPa |
-| hot `sigma_2` | **+62.03 MPa** | **−15.74 MPa** | −93.50 MPa |
-| cold `sigma_1` | +86.84 MPa | +156.12 MPa | +225.40 MPa |
-| cold `sigma_2` | **−86.84 MPa** | **+22.03 MPa** | +130.90 MPa |
-| min margin | +1.487 PASS | +0.384 PASS | **−0.042 FAIL** |
-
-The bolded `sigma_2` entries show the sign flip: the titanium-like member
-crosses zero stress at **`eta_r = 0.663399`** (`K_r = 1.194e7 N`), independent of
-`dT`. The aluminium-like member never changes sign.
-
-Cold governs at every restraint level in this sweep — computed, not assumed.
-Member 1 is loaded monotonically harder with restraint, but **member 2 is not
-monotonic**: its stress magnitude falls to zero and then grows again with the
-opposite sign.
-
-**Inverse design result:** `finite_limit`, maximum tolerable
-**`eta_r = 13.7405`** (`K_r = 2.473e8 N`), at which the minimum margin is zero.
-This matches an independent analytical derivation of the boundary
-(13.740543735) to within the search tolerance. Above that stiffness the joint
-no longer meets the preliminary elastic yield criterion at its governing
-extreme.
+The free joint is self-equilibrating — one member in tension, one in
+compression. Strong restraint drives *both* to the same sign, so the low-CTE
+member must pass through zero stress on the way. That crossing is independent
+of `dT`.
 
 ---
 
-## Milestone 3 — adhesive shear-lag over a finite overlap
+## 3 · Adhesive shear-lag
 
-> **A screening model.** One-dimensional, linear-elastic load transfer and
-> adhesive shear only. No peel stress, no edge singularities, no adhesive
-> fracture, no nonlinear response, no finite-element joint stresses.
+A one-dimensional linear-elastic screen for a finite bonded overlap: two axial
+adherends, thin constant-thickness adhesive, axial force only, no bending, no
+peel, no edge singularity.
 
-### Assumptions
+```
+d2s/dx2 - beta^2 s = 0        beta^2 = (G_a b / t_a)(1/E1A1 + 1/E2A2)
+transfer length = 1/beta      lambda = beta L_b
+```
 
-- two axial adherends, constant overlap length and constant bond width
-- thin adhesive layer of constant thickness, constant shear modulus, linear elastic
-- adherends carry axial force only
-- no bending, no eccentricity, no peel stress, no adhesive normal stress
-- no free-edge singularity model, no yielding, no slip or debond
-- uniform temperature, uniform properties, perfect bond
+On `x ∈ [0, L_b]` with the mismatch force fully developed at the inboard plane
+and the free edge unloaded:
 
-### Adhesive data and overlap geometry
+```
+N_1(x) = N_t [1 - sinh(beta x)/sinh(beta L_b)]        N_2(x) = -N_1(x)
+tau(x) = -(N_t beta / b) cosh(beta x)/sinh(beta L_b)
+```
 
-`AdhesiveMaterial` carries `shear_modulus`, `shear_strength` and a **mandatory
-non-empty `source_note`**, so a screening number can never be mistaken for a
-qualified allowable. The shipped record is labelled
-`ILLUSTRATIVE ADHESIVE-LIKE INPUT — NOT DESIGN ALLOWABLE`; no commercial
-adhesive is named, because the properties are not sourced.
+`|tau| ∝ cosh(beta x)` is strictly increasing, so **peak shear sits at the free
+edge** — proven from the derivative, not assumed.
 
-| | Illustrative adhesive | Illustrative overlap |
+![Shear distribution](figures/fig2_shear_distribution.png)
+
+Baseline 40 × 20 mm overlap, 0.2 mm bondline, `G_a` 1.0 GPa, shear strength
+25 MPa, design factor 1.25 → allowable 20 MPa. `beta` = 152.894 /m, transfer
+length 6.54 mm, `lambda` = 6.116.
+
+| | Hot | Cold |
 |---|---|---|
-| `G_a` | 1.0 GPa | `L_b` = 40 mm |
-| shear strength | 25 MPa | `b` = 20 mm |
-| design factor | 1.25 → `tau_allow` = 20 MPa | `t_a` = 0.2 mm |
+| transferred force | 6202.78 N | 8683.89 N |
+| peak shear | 47.42 MPa | **66.39 MPa** |
+| adhesive margin | −0.578 | **−0.699 FAIL** |
 
-`bond_area = b * L_b` = 800 mm² is the bonded interface area, kept deliberately
-distinct from the adherends' 100 mm² cross-sections. Both values are clean
-mid-range picks made *before* the resulting stresses were computed — nothing is
-tuned to manufacture a pass or a failure.
+Cold/hot peak ratio is exactly 1.4 = 140/100. The allowable excursion at this
+geometry is **±42.18 K**, against the ±140/100 K required.
 
-### Mismatch strain and the shear-lag parameter
-
-```
-d_eps = (alpha_1 - alpha_2) * dT
-```
-
-Member 1 minus member 2, used consistently. With `S_i = E_i A_i` and
-`C = 1/S_1 + 1/S_2`, the governing equation derived below gives
-
-```
-beta^2 = (G_a b / t_a) * ( 1/(E_1 A_1) + 1/(E_2 A_2) )
-```
-
-Dimensions check: `G_a b / t_a` is [N/m²], `1/(EA)` is [1/N], so `beta²` is
-[1/m²] and `beta` is [1/m]. **Both** adherend compliances enter — a joint
-spreads load only as well as its more compliant member allows.
-
-```
-transfer length = 1 / beta          lambda = beta * L_b
-```
-
-`lambda` (not `beta L_b / 2`) is the single dimensionless overlap metric used
-everywhere in this package: the number of transfer lengths the overlap spans.
-
-### Sign convention and derivation
-
-`u_i(x)` is axial displacement, `s(x) = u_1 - u_2` is the relative slip, and the
-adhesive is linear: `tau(x) = (G_a / t_a) s(x)`. Adherend forces are
-tension-positive, `N_i = E_i A_i (du_i/dx - alpha_i dT)`.
-
-For an axial bar with distributed applied load `q` per unit length,
-`dN/dx = -q`. When `s > 0` the adhesive drags adherend 1 backward and adherend 2
-forward, so `q_1 = -b tau` and `q_2 = +b tau`:
-
-```
-dN_1/dx = +b tau        dN_2/dx = -b tau        d(N_1 + N_2)/dx = 0
-```
-
-This is the **sign-mirror of one common textbook ordering**; it is the version
-consistent with `tau = +(G_a/t_a)(u_1 - u_2)`, and it is what makes the governing
-equation stable rather than oscillatory. With the self-equilibrating free-joint
-pair `N_2 = -N_1`:
-
-```
-ds/dx   = N_1/S_1 - N_2/S_2 + d_eps = C N_1 + d_eps
-d2s/dx2 = C dN_1/dx = C b (G_a/t_a) s
-
-=>  d2s/dx2 - beta^2 s = 0
-```
-
-### Boundary conditions
-
-The domain is `x in [0, L_b]`:
-
-- **`x = 0` — the loaded transfer plane.** The inboard edge of the overlap,
-  where the free-joint mismatch force pair is fully developed:
-  `N_1(0) = N_t` and `N_2(0) = -N_t`, with `N_t` imported from Milestone 1.
-- **`x = L_b` — the free edge.** `N_1(L_b) = N_2(L_b) = 0`.
-
-Prescribing the Milestone 1 force at the loaded plane is the **conservative
-screening idealisation**: it assumes the mismatch force is fully developed and
-requires the overlap to shear-transfer all of it.
-
-### Closed-form distributions
-
-`s = A cosh(beta x) + B sinh(beta x)` with `N_1 = (ds/dx - d_eps)/C`.
-`N_1(0) = N_t = -d_eps/C` forces `B = 0`; `N_1(L_b) = 0` then fixes `A`:
-
-```
-N_1(x) =  N_t [ 1 - sinh(beta x) / sinh(beta L_b) ]
-N_2(x) = -N_1(x)
-tau(x) = -(N_t beta / b) cosh(beta x) / sinh(beta L_b)
-```
-
-Evaluated in closed form — the ODE is never solved numerically. The hyperbolic
-ratios are implemented in an overflow-safe form, so a `lambda = 100` overlap
-still evaluates cleanly.
-
-### Peak versus average shear
-
-`|tau|` is proportional to `cosh(beta x)`, whose derivative `beta sinh(beta x)`
-is strictly positive for `x > 0`. So `|tau|` increases monotonically across the
-overlap and the peak is at the **free edge** `x = L_b` — proven from the
-derivative, not assumed.
-
-```
-tau_peak = |N_t| beta coth(beta L_b) / b
-tau_avg  = |N_t| / (b L_b)                    (whole overlap — no factor of two)
-tau_peak / tau_avg = lambda coth(lambda)
-```
-
-The concentration factor `lambda coth(lambda)` → 1 as `lambda → 0` (a very
-short overlap shears almost uniformly) and → `lambda` as `lambda → ∞`.
-
-The long-overlap asymptote is analytic:
-
-```
-tau_inf = |N_t| beta / b
-```
-
-and peak shear approaches it **from above**. That makes `tau_inf` a hard lower
-bound: no overlap length, however long, can push the peak below it.
-
-### Force-transfer verification
-
-Five identities are enforced by tests: `N_1 + N_2 = 0` at every station;
-`b ∫ tau dx` equals the change in adherend force; the loaded-plane force equals
-the Milestone 1 demand exactly; the force-transfer residual vanishes to machine
-precision; and zero mismatch gives zero force and shear everywhere. The integral
-check is done with a Simpson rule **implemented in the test**, not by reusing
-the model's own closed-form integral.
-
-### Adhesive margin
-
-```
-tau_allow = shear_strength / design_factor
-MS_adh    = tau_allow / abs(tau_peak) - 1
-```
-
-A **preliminary adhesive shear margin**, not a certification margin. Design
-factor ≥ 1, boundary `MS = 0` passes, zero demand returns `math.inf`. The
-governing extreme is computed from the two margins, with an exact tie resolving
-to `"cold"` as in the earlier milestones.
-
-### Global + local screening
-
-`screen_joint(...)` runs the Milestone 1 yield screen and the Milestone 3
-adhesive screen together. The two margins are **reported separately and never
-combined numerically** — they measure different failure modes against different
-allowables. Only the pass/fail booleans are combined, with a plain boolean AND.
+**Why overlap length cannot save it.** Past a few transfer lengths
+`tau_peak → tau_inf = 66.386 MPa`, which does not contain `L_b` at all and
+already exceeds the allowable. Status: `no_finite_length_within_model`.
 
 ---
 
-## Representative Milestone 3 result
+## 4 · Static bondline design trade
 
-Illustrative joint and environment as before, 40 × 20 mm overlap, 0.2 mm
-bondline, `G_a` = 1.0 GPa, adhesive design factor 1.25 (`tau_allow` = 20 MPa).
+Substituting the mismatch demand into the asymptote:
 
 ```
-beta = 152.894 /m      transfer length = 6.54 mm      lambda = beta L_b = 6.116
+tau_inf = |d_eps| sqrt( G_a / (b t_a C) )        C = 1/E1A1 + 1/E2A2
 ```
 
-| | Hot (`dT = +100 K`) | Cold (`dT = -140 K`) |
+| lever | exponent | cost to halve peak shear |
 |---|---|---|
-| transferred force `N_t` | 6202.78 N | 8683.89 N |
-| `tau_peak` (free edge) | 47.42 MPa | **66.39 MPa** |
-| `tau_avg` | 7.75 MPa | 10.85 MPa |
-| peak / average | 6.116 | 6.116 |
-| adhesive margin | −0.578 FAIL | **−0.699 FAIL** |
-
-**Cold governs**, at a ratio of exactly 140/100 = 1.4 — peak shear is linear in
-`dT`, so the larger excursion wins. Computed from the margins, not assumed.
-
-**Overlap sensitivity** (cold, governing):
-
-| `L_b` [mm] | `lambda` | `tau_peak` [MPa] | `tau_avg` [MPa] | peak/avg |
-|---|---|---|---|---|
-| 5 | 0.76 | 103.13 | 86.84 | 1.19 |
-| 10 | 1.53 | 72.93 | 43.42 | 1.68 |
-| 20 | 3.06 | 66.68 | 21.71 | 3.07 |
-| 40 | 6.12 | 66.39 | 10.85 | 6.12 |
-| 80 | 12.23 | 66.386 | 5.43 | 12.23 |
-| 160 | 24.46 | 66.386 | 2.71 | 24.46 |
-
-Average shear falls as `1/L_b` — a 32× reduction across the sweep — while the
-peak moves by less than 1% beyond 20 mm, converging on the 66.386 MPa
-asymptote. **This is the central Milestone 3 conclusion: overlap length buys
-average shear, not peak shear.**
-
-**Adhesive thickness** (0.05 → 1.0 mm) lowers `beta` from 305.8 to 68.4 /m,
-lengthens the transfer zone from 3.27 to 14.62 mm and cuts peak shear from
-132.8 to 29.9 MPa. **Adhesive modulus** (0.1 → 5 GPa) does the reverse, raising
-peak shear from 21.9 to 148.4 MPa.
-
-**Area ratio** `A_Al/A_Ti` (0.25 → 4) is recomputed end to end: the Milestone 1
-demand rises from 3065 to 16032 N while `beta` falls from 257 to 113 /m, and
-peak shear rises on balance from 39.4 to 90.2 MPa.
-
-**Allowable excursion:** `|dT|_allow = 42.18 K` at this geometry — against study
-excursions of −140 K and +100 K.
-
-**Minimum overlap:** status `no_finite_length_within_model`. The allowable
-(20 MPa) is below the long-overlap asymptote (66.386 MPa), so **no finite
-overlap can pass** and no number is invented. Adding bonded length is the wrong
-lever here.
-
-**Combined screen:** member yield **+1.487 PASS**, adhesive shear **−0.699
-FAIL**, overall feasibility `False`, failing screen `adhesive shear`. Reported
-honestly: this illustrative joint is limited by its bondline, not by its metal.
-
-### Engineering interpretation
-
-- **M1 sets the demand.** The CTE-mismatch force is a global compatibility
-  result and does not depend on how the joint is bonded.
-- **M3 sets the transfer.** How that force spreads over the overlap depends on
-  the adhesive shear stiffness and *both* adherend axial stiffnesses, through
-  `beta`.
-- **A thicker or more compliant adhesive spreads load over a longer transfer
-  region**, lowering `beta` and the peak shear.
-- **Longer overlap strongly reduces average shear but eventually gives
-  diminishing reduction in peak end shear**, which is floored at `tau_inf`.
-- **Cold governs the canonical magnitude** because 140 K > 100 K, for
-  temperature-independent properties.
-- **Lower predicted peak shear with a softer adhesive is not automatically a
-  complete design improvement.** Peel stress, creep, durability, and joint
-  deformation are all omitted from this screen, and every one of them tends to
-  get worse as the bondline gets softer or thicker.
-
----
-
-## Milestone 4 — bounded bondline design trade
-
-> **Not an optimization.** This milestone evaluates explicitly bounded grids
-> with the verified equations and applies one stated selection rule. It does not
-> search a design space, and it makes no claim of global optimality.
-
-### Why overlap length alone could not recover the design
-
-Milestone 3's peak shear is `tau_peak = tau_inf coth(beta L_b)`. Once the
-overlap spans more than a few transfer lengths, `coth → 1` and the peak sits on
-the long-overlap asymptote `tau_inf`, which does **not** contain `L_b` at all.
-At the canonical geometry `lambda = 6.12`, so `coth = 1.00001` — the overlap was
-already asymptotic, and the remaining 66.386 MPa is untouchable by more bonded
-length.
-
-### Long-overlap asymptotic scaling
-
-Substituting the Milestone 1 demand `N_t = d_eps / C` into `tau_inf = |N_t| beta / b`:
-
-```
-tau_inf = |d_eps| * sqrt( G_a / (b * t_a * C) )
-```
-
-| lever | exponent on `tau_inf` | cost to halve `tau_inf` |
-|---|---|---|
-| bond width `b` | **−1/2** (*not* `1/b`) | 4× wider |
-| adhesive thickness `t_a` | −1/2 | 4× thicker |
+| bond width `b` | **−1/2** (*not* 1/b) | 4× wider |
+| bondline thickness `t_a` | −1/2 | 4× thicker |
 | adhesive modulus `G_a` | +1/2 | 4× softer |
-| `|dT|` and `|alpha_1 − alpha_2|` | +1 | 2× smaller |
-| adherend compliance `C` | −1/2 | (stiffer adherends make it *worse*) |
+| `|dT|`, `|alpha1 − alpha2|` | +1 | 2× smaller |
 
-Every exponent is verified to 12 decimal places in the tests. The width law is
-the important trap: widening the bond also **raises** `beta`, so the naive
-`tau_peak ∝ 1/b` is wrong — the true asymptotic law is `b^(-1/2)`.
+Every exponent is verified numerically to 1e−12. Because the geometric levers
+sit under a square root, no single one is cheap:
 
-Because every geometric lever sits under a square root, **halving the peak shear
-costs a factor of four** in width, thickness or modulus. Only the thermal and
-CTE levers are first order.
+| single-lever recovery | required |
+|---|---|
+| bond width | **220.35 mm** (11.0× baseline) |
+| bondline thickness | **2.499 mm** (12.5× baseline) |
+| adhesive modulus | **0.0800 GPa** (12.5× softer) |
 
-### Monotonicity and the uniform-shear floor
+![Static design trade](figures/fig3_static_design_trade.png)
 
-Writing `tau_peak = |N_t| f(beta) / b` with `f(u) = u coth(u L_b)`, and using
-`sinh(2y)/2 > y`, `f` is **strictly increasing in `beta`**. Hence `tau_peak`
-strictly falls with thickness and width, and strictly rises with modulus — all
-three established analytically before any bisection runs.
+A bounded 42-point width × thickness map at `G_a` = 1.0 GPa has **6 feasible
+points**. Under a deterministic policy (feasible, then smallest bond area, then
+thinner bondline, then larger margin, then input order) the static pick is
+**50 mm × 1.0 mm**, at cold adhesive MS **+0.065**.
 
-As `beta → 0` (a very thick or very soft bondline) `f(beta) → 1/L_b`, so
+There is also a hard floor: as the bondline softens, `tau_peak` falls only to
+`tau_avg = |N_t|/(b L_b)`. Thickness and modulus are bounded by it; **bond width
+is not**, because that floor itself falls as `1/b`.
+
+---
+
+## 5 · Thermal-cycle fatigue
+
+One cold → hot → cold excursion is **one cycle**; only the two endpoints are
+used. `N` always means cycles.
 
 ```
-tau_peak  ->  |N_t| / (b L_b)  =  tau_avg          the uniform-shear FLOOR
+sigma_a = (sigma_max - sigma_min)/2     sigma_m = (sigma_max + sigma_min)/2
+sigma_a = A N^b   (A > 0, b < 0)   =>   N_f = (sigma_a/A)^(1/b)
+life ratio = N_f / N_required           MS_life = ratio - 1
 ```
 
-This floor is the key structural result of Milestone 4. **Thickness and modulus
-are both bounded below by it**: if `tau_avg` already exceeds the allowable, no
-bondline — however thick or compliant — can pass, and
-`required_adhesive_thickness` / `maximum_allowable_adhesive_shear_modulus`
-return `no_finite_thickness_within_model` / `no_finite_modulus_within_model`
-rather than searching. **Bond width has no floor**, because `tau_avg` itself
-falls as `1/b`. That makes width the only unconditionally effective single
-lever in this model.
+> **Mean stress is reported but no mean-stress correction is applied.** With
+> unsourced illustrative curves, an unsourced Goodman/Gerber correction would
+> only add false authority.
 
-Canonically `tau_avg = 10.855 MPa` against a 20 MPa allowable, so thickness and
-modulus do both have finite answers here.
+Adhesive shear reverses sign with `dT`, so both endpoints are read at the *same*
+station (the free edge) and the cycle crosses zero. Using two peak *magnitudes*
+instead would collapse the baseline amplitude from 56.90 to 9.48 MPa — a
+mistake a test guards against explicitly.
 
-### Sensitivity sweeps
+Illustrative curves (all `ILLUSTRATIVE FATIGUE INPUT — NOT DESIGN ALLOWABLE`,
+separate from the static strengths, no alloy or product claimed):
 
-All six sweeps are deterministic, build copies rather than mutating the shipped
-records, and compute both extremes at every point (cold governs throughout,
-computed from the margins).
-
-| sweep | range | result |
-|---|---|---|
-| bond width | 10 → 100 mm | 93.92 → 29.69 MPa, **all FAIL** |
-| adhesive thickness | 0.05 → 1.5 mm | 132.77 → 24.80 MPa, **all FAIL** |
-| adhesive modulus | 5.0 → 0.05 GPa | 148.44 → 16.90 MPa, only 0.05 GPa passes |
-| area ratio `A_1/A_2` | 0.25 → 4 | 39.44 → 90.22 MPa, all FAIL |
-| excursion `|dT|` | 20 → 160 K | 9.48 → 75.87 MPa, passes to 40 K |
-| CTE mismatch scale | 0 → 1.5 | 0 → 99.58 MPa, passes to ×0.25 |
-
-Two findings worth stating plainly:
-
-- **Equal areas are not optimal for adhesive shear.** Shrinking the
-  aluminium-like member to `A_1/A_2 = 0.25` cuts peak shear from 66.39 to
-  39.44 MPa, because it lowers the Milestone 1 mismatch force faster than it
-  raises `beta`. It also cuts the yield margin from +1.487 to +0.762 — the two
-  screens pull in opposite directions, which is exactly why they are reported
-  separately.
-- **The thermal sweep crosses PASS→FAIL between 40 K and 60 K**, bracketing the
-  closed-form allowable of 42.18 K from Milestone 3.
-
-### Inverse sizing
-
-Each utility sizes one lever against the governing extreme by deterministic
-bounded bisection, after settling feasibility analytically. Bounds, tolerance
-and iteration cap are explicit and **never expanded silently**.
-
-| utility | canonical result | status |
-|---|---|---|
-| `required_bond_width` | **220.35 mm** (11.02× the 20 mm baseline) | `finite_required_width` |
-| `required_adhesive_thickness` | **2.499 mm** (12.49× the 0.2 mm baseline) | `finite_required_thickness` |
-| `maximum_allowable_adhesive_shear_modulus` | **0.0800 GPa** (12.49× softer) | `finite_maximum_modulus` |
-
-All three demand essentially the same factor on the group `G_a / (b t_a)`,
-because the asymptote depends on nothing else. Each is individually extreme — a
-220 mm bond, a 2.5 mm bondline, or an 80 MPa-class adhesive. **These are
-model-based screening values, not allowables.**
-
-Status vocabularies are explicit: `lower_bound_already_passes`,
-`finite_required_*`, `no_boundary_within_search_bounds`, plus
-`no_finite_thickness_within_model` / `no_finite_modulus_within_model` where the
-uniform-shear floor makes the lever useless, and
-`upper_bound_already_passes` / `lower_bound_already_fails` for the modulus
-search, whose boundary is a **maximum** rather than a minimum.
-
-### Design-factor sensitivity
-
-Required width scales as `1/tau_allow²`, so the design basis drives the sizing
-hard:
-
-| design factor | `tau_allow` | cold margin | required width |
+| curve | A | b | σ_a at 1e4 cycles |
 |---|---|---|---|
-| 1.0 | 25.00 MPa | −0.623 | 141.03 mm |
-| 1.25 | 20.00 MPa | −0.699 | 220.35 mm |
-| 1.5 | 16.67 MPa | −0.749 | 317.31 mm |
-| 2.0 | 12.50 MPa | −0.812 | 564.11 mm |
+| aluminium-like | 900 MPa | −0.12 | 298.0 MPa |
+| titanium-like | 2000 MPa | −0.10 | 796.2 MPa |
+| adhesive **shear** | 60 MPa | −0.15 | 15.07 MPa |
 
-Doubling the factor quadruples the bond width. The factor lives in
-`AdhesiveShearBasis`, never inside the adhesive record.
+Required life: **1e4 cycles** — a round figure of the order of a couple of years
+of low-Earth-orbit cycling, an illustrative study input, *not* a qualification
+requirement.
 
-### Bounded width × thickness design map
+| component | σ_a / τ_a | N_f | |
+|---|---|---|---|
+| member 1, free | 74.43 MPa | 1.05e9 | PASS |
+| member 2, free | 74.43 MPa | 1.96e14 | PASS |
+| M3 baseline adhesive | 56.90 MPa | **1.4** | FAIL |
+| M4 static-selected adhesive | 16.10 MPa | **6439** | **FAIL** |
 
-Widths 10–100 mm × thicknesses 0.1–1.0 mm, 42 points, canonical adhesive
-(`G_a = 1.0 GPa`, 25 MPa strength, DF 1.25). Cold peak shear [MPa], `*` = passes
-both screens:
+The metal sits five to ten orders of magnitude clear. The adhesive governs
+everywhere. Fatigue is also the *tighter* constraint: it caps cold peak shear at
+17.58 MPa against the static 20 MPa.
 
-| `b` \ `t_a` | 0.10 | 0.20 | 0.30 | 0.50 | 0.75 | 1.00 |
-|---|---|---|---|---|---|---|
-| **10 mm** | 132.77 | 93.92 | 76.79 | 59.88 | 49.61 | 43.78 |
-| **20 mm** | 93.88 | 66.39 | 54.21 | 42.02 | 34.41 | 29.94 |
-| **30 mm** | 76.66 | 54.20 | 44.26 | 34.29 | 28.02 | 24.30 |
-| **40 mm** | 66.39 | 46.94 | 38.33 | 29.69 | 24.25 | 21.01 |
-| **50 mm** | 59.38 | 41.99 | 34.28 | 26.56 | 21.68 | **18.78\*** |
-| **75 mm** | 48.48 | 34.28 | 27.99 | 21.68 | **17.70\*** | **15.33\*** |
-| **100 mm** | 41.99 | 29.69 | 24.24 | **18.78\*** | **15.33\*** | **13.28\*** |
+---
 
-**6 of 42 points are feasible** — co-design works where neither single lever
-did. A second illustrative map at `G_a = 0.1 GPa` opens **32 of 42**; the
-canonical adhesive is not replaced by that variant, it is shown alongside purely
-to demonstrate the effect.
+## 6 · Integrated comparison
 
-### Preliminary design policy and selected point
+| Quantity | M3 baseline | M4 static | M5 fatigue |
+|---|---|---|---|
+| bond width [mm] | 20.0 | 50.0 | **30.0** |
+| overlap length [mm] | 40.0 | 40.0 | 40.0 |
+| adhesive thickness [mm] | 0.20 | 1.00 | **2.00** |
+| `beta` [1/m] | 152.89 | 108.11 | 59.22 |
+| transfer length [mm] | 6.540 | 9.250 | 16.887 |
+| hot peak shear [MPa] | 47.419 | 13.417 | 12.460 |
+| cold peak shear [MPa] | 66.386 | 18.783 | 17.444 |
+| static adhesive margin | −0.6987 | +0.0648 | **+0.1465** |
+| metal yield margin | +1.4874 | +1.4874 | +1.4874 |
+| adhesive τ_a [MPa] | 56.903 | 16.100 | 14.952 |
+| adhesive N_f [cycles] | 1.424 | 6439 | **1.055e4** |
+| fatigue life ratio | 0.0001 | 0.6439 | **1.0545** |
+| static adhesive / metal yield / fatigue | FAIL / PASS / FAIL | PASS / PASS / FAIL | **PASS / PASS / PASS** |
+| **INTEGRATED** | **FAIL** | **FAIL** | **PASS** |
 
-Policy `minimum_bond_area`, applied in order:
+The three margins are reported side by side and **never numerically merged** —
+they measure different failure modes against different allowables. Only the
+pass/fail booleans are combined.
 
-1. must pass member yield **and** adhesive shear at both extremes
-2. smallest bond area (= width × overlap; the overlap is fixed, so this is the
-   narrowest bond)
-3. tie-break: smaller adhesive thickness
-4. tie-break: larger adhesive margin
-5. tie-break: earlier position in the grid
+### Final preliminary configuration
 
-| | baseline | selected |
-|---|---|---|
-| bond width | 20.00 mm | **50.00 mm** |
-| adhesive thickness | 0.20 mm | **1.00 mm** |
-| bond area | 800 mm² | 2000 mm² |
-| hot peak shear | 47.42 MPa | 13.42 MPa |
-| cold peak shear | 66.39 MPa | 18.78 MPa |
-| hot adhesive margin | −0.578 | **+0.491** |
-| cold adhesive margin | −0.699 | **+0.065** |
-| member yield margin | +1.487 | +1.487 |
-| overall feasible | `False` | **`True`** |
+**30 mm bond width × 40 mm overlap × 2.0 mm bondline, `G_a` = 1.0 GPa** —
+static adhesive MS **+0.147**, metal yield MS **+1.487**, fatigue life ratio
+**1.055**.
 
-> **The selected point is a preliminary feasible point within the bounded study
-> grid, not an optimized flight-joint design.**
+It is the unique minimum-bond-area feasible point of the bounded grid. Note it
+is *narrower* than the static pick: allowing a thicker, more compliant bondline
+buys more than width does.
 
-A thinner adhesive is not automatically better for manufacturing or durability,
-and a wider bond is not automatically worse. Bond area and adhesive volume are
-reported as **geometric diagnostics only** — no adhesive density is supplied, so
-no adhesive mass is computed or implied, and bond width is not a mass metric.
+> This is a **preliminary fatigue-feasible bounded-grid point** — not an
+> optimized design, not a certified joint, not a final flight design. Its life
+> ratio of 1.055 is slim.
 
-### Engineering interpretation
+---
 
-- **Why overlap failed.** Past a few transfer lengths peak shear is set by the
-  long-overlap asymptote, which does not contain the overlap length.
-- **Width.** Widening the bond lowers force-transfer intensity, but it also
-  raises `beta`; the net asymptotic law is `b^(-1/2)`, not `1/b`.
-- **Adhesive thickness.** A thicker bondline is more compliant, lowers `beta`
-  and spreads transfer over a longer distance — down to the uniform-shear floor.
-- **Adhesive modulus.** A softer adhesive spreads transfer the same way, but may
-  introduce deformation, creep and durability problems this model cannot see.
-- **Co-design.** A width or compliance change that is insufficient alone becomes
-  effective in combination: neither 50 mm nor 1.0 mm passes by itself, but
-  together they do.
-- **Metal versus adhesive.** The Milestone 1 metals pass comfortably while the
-  Milestone 3 baseline bondline fails. These are distinct margins against
-  distinct allowables and must stay separately visible; only the booleans are
-  ANDed.
-- **Model caution.** The model predicts its largest shear at the free edge —
-  exactly where the omitted peel stress and edge singularity matter most. A
+## 7 · Robustness
+
+**Required-cycle sensitivity** (the requirement is user-selected, so the whole
+range is reported):
+
+| N_required | M4 static | M5 fatigue | grid feasible | selected |
+|---|---|---|---|---|
+| 1e2 | PASS (64.4) | PASS (105) | 16 / 30 | 30 × 1.5 mm |
+| 1e3 | PASS (6.44) | PASS (10.5) | 16 / 30 | 30 × 1.5 mm |
+| **1e4** | **FAIL (0.644)** | **PASS (1.055)** | **12 / 30** | **30 × 2.0 mm** |
+| 1e5 | FAIL (0.064) | FAIL (0.106) | 3 / 30 | 75 × 2.0 mm |
+| 1e6 | FAIL (0.006) | FAIL (0.011) | 0 / 30 | none |
+
+**Thermal-cycle scale sensitivity** at the final point: amplitude is exactly
+linear in the scale and life follows `N ∝ scale^(1/b)`, both verified to machine
+precision. It passes to scale 1.0 and fails at 1.25 — i.e. a 25 % larger
+excursion costs a factor of ~4.4 in life.
+
+**Restraint (metal fatigue only):** member 1's amplitude rises monotonically
+from 74.4 to 185.1 MPa across `eta_r` 0 → 13.74; member 2's does *not* — it
+falls to exactly zero at `eta_r` = 0.663399, the same crossing found in the
+static study, so that member sees no thermal cycle at all there. Metal fatigue
+passes at every restraint level tested. This is a neat consequence of the linear
+model and should not be over-read: no mean-stress correction is applied, and the
+mean stress there is not zero away from the crossing.
+
+---
+
+## 8 · Verification
+
+**938 automated tests.** The emphasis is on checking the code against something
+*other than itself*:
+
+- **independent closed forms** — member stresses re-derived from the CTE-mismatch
+  form, never by calling the production strain helper
+- **exact force equilibrium** — `N_1 + N_2 = 0` to machine precision everywhere
+- **limiting cases** — identical CTE → zero stress; `dT` = 0 → zero state;
+  `K_r` = 0 → the free joint exactly; `K_r → ∞` → the reference strain
+- **heating/cooling symmetry** and **area-ratio identities**
+  (`sigma_1/sigma_2 = −A_2/A_1`)
+- **the restraint zero-stress crossing** and the **inverse restraint boundary**,
+  cross-checked against an analytic solution
+- **shear-lag derivation** — the ODE derived against the stated sign convention,
+  `beta` dimensionally audited, and the sign-mirror trap documented
+- **independent numerical integration** — a Simpson rule *written in the test*
+  reproduces the force transfer; the model's own closed-form integral is never
+  used to check itself
+- **long-overlap asymptote** and **short-overlap uniform-shear limit**
+- **all inverse-design statuses exercised**, including the two
+  bracket-too-narrow cases and `no_finite_length_within_model`
+- **M4 scaling exponents measured, not asserted** (to 1e−12), including an
+  explicit test that the naive `1/b` width law is *wrong*
+- **width / thickness / modulus boundary round trips**, each bracketed either side
+- **selection determinism** and order-independence
+- **fatigue signed-endpoint audit**, **Basquin round trips**, **zero-amplitude
+  infinite life**, **requirement boundaries**, **Basquin power-law scaling**
+- **regression coverage across all prior stages** — every headline value is
+  re-asserted from later test files
+
+A separate consistency audit re-derives all 75 headline values and conventions
+from the code; all 75 agree.
+
+---
+
+## 9 · Engineering interpretation
+
+- **CTE mismatch** creates self-equilibrating metal stress with no external load
+  at all — the two members fight each other.
+- **External restraint** can qualitatively change member stress *signs* and
+  amplify metal demand; a stiff enough surround makes the metal limiting.
+- **Finite overlap** means the mismatch force transfers over a characteristic
+  length `1/beta`, concentrating at the free edge.
+- **Overlap saturation**: longer overlap lowers *average* shear as `1/L`, but
+  peak edge shear approaches a nonzero asymptote. Length is the wrong lever.
+- **Bondline compliance**: wider, thicker or softer bondlines spread transfer and
+  reduce peak shear — but only as a square root, so co-design beats any single
+  change.
+- **Static vs fatigue**: the static screen was necessary and not sufficient. The
+  50 mm × 1.0 mm point passes shear strength and fails the 10 000-cycle screen.
+- **The final point is a bounded-grid screening result**, with a slim margin.
+- **Strongest caveat**: the largest modelled shear occurs exactly at the free
+  edge — precisely where the omitted peel stress, edge singularity and fracture
+  behaviour matter most, and where bonded-joint fatigue cracks actually start. A
   passing screening margin here is necessary, not sufficient.
 
 ---
 
-## Milestone 5 — thermal-cycle fatigue screen
+## 10 · Limitations
 
-> **A screening layer, not certification life.** Constant-amplitude, two
-> endpoints, illustrative curves, no mean-stress correction.
+**Global model** — uniform temperature · linear elasticity · no plasticity · no
+creep · no thermal gradient · no temperature-dependent properties · no bending
+or warpage.
 
-### The cycle
+**Restraint** — a single linear axial restraint · no spacecraft structural
+load-path model · no nonlinear support behaviour.
 
-One complete **cold → hot → cold** excursion is **one thermal cycle**. Only the
-two endpoint states are used — no transient path, no dwell time, no rate
-effect, no variable-amplitude spectrum. `N` means *cycles* everywhere, never
-reversals.
+**Adhesive** — 1-D shear-lag only · no peel stress · no bending or eccentricity ·
+no edge-singularity mechanics · no adhesive normal stress · no adhesive
+plasticity · no cohesive fracture · no debond propagation · no fillets or spew ·
+no surface-preparation effects · no manufacturing defects · no environmental
+degradation.
 
-```
-sigma_max = max(sigma_hot, sigma_cold)      sigma_a = (sigma_max - sigma_min)/2
-sigma_min = min(sigma_hot, sigma_cold)      sigma_m = (sigma_max + sigma_min)/2
-R = sigma_min / sigma_max        (None when sigma_max is exactly zero)
-```
+**Fatigue** — constant-amplitude endpoint cycle only · no rainflow · no Miner's
+rule · no crack growth · no Coffin–Manson · no mean-stress correction · no
+creep–fatigue interaction · no scatter or reliability factors · no temperature
+dependence · illustrative curves only, with no endurance limit and no low-cycle
+cut-off (lives outside ~1e3–1e8 cycles are extrapolations).
 
-One helper, `stress_cycle(...)`, serves both metal normal stress and adhesive
-shear, so the two can never drift apart.
+**Design** — illustrative material, adhesive and fatigue data · illustrative
+thermal-cycle requirement · bounded design grids only · no optimization · no
+certification claim.
 
-**The signed-endpoint trap.** The shear-lag model reverses adhesive shear with
-`dT`, so the two endpoints have **opposite signs** and the cycle crosses zero.
-Both endpoints are read at the *same station* — the free edge `x = L_b`, where
-Milestone 3 proved the peak sits. Feeding in two peak *magnitudes* instead
-collapses the cycle: for the baseline that turns a 56.90 MPa amplitude into
-9.48 MPa, a 6× under-prediction. A test asserts exactly this failure mode.
-
-### Fatigue curves and data policy
-
-Basquin power law in cycles:
-
-```
-sigma_a = A * N^b        =>        N_f = (sigma_a / A)^(1/b)
-```
-
-with `A > 0`, `b < 0`, and a mandatory non-empty provenance string. All three
-shipped curves are labelled **`ILLUSTRATIVE FATIGUE INPUT — NOT DESIGN
-ALLOWABLE`**; none is traceable to an alloy, temper, adhesive product, surface
-condition or test programme, so no such designation is claimed.
-
-| curve | `A` | `b` | `sigma_a` at 1e4 cycles |
-|---|---|---|---|
-| Aluminium-like (member 1) | 900 MPa | −0.12 | 298.0 MPa |
-| Titanium-like (member 2) | 2000 MPa | −0.10 | 796.2 MPa |
-| Adhesive **shear** | 60 MPa | −0.15 | 15.07 MPa |
-
-The adhesive curve is in **shear**, used directly against alternating shear —
-no shear-to-von-Mises conversion is applied anywhere in Milestone 5. Its
-steeper exponent reflects the greater cyclic sensitivity typical of polymeric
-adhesives. A Basquin fit has no endurance limit and no low-cycle cut-off, so
-each curve states an intended range (roughly 1e3–1e8 cycles) in its notes;
-nothing is clamped, because silently clamping would hide an extrapolation
-rather than flag it.
-
-### Mean-stress policy
-
-> **Mean stress is reported but no mean-stress correction is applied in
-> Milestone 5.**
-
-Life depends on the alternating stress alone. Goodman, Gerber and Soderberg are
-deliberately excluded: with unsourced illustrative curves, an unsourced
-correction would only add false authority. The mean stress is computed and
-carried on every result so the omission stays visible, and a test asserts that
-holding amplitude fixed while varying mean stress leaves the predicted life
-unchanged.
-
-### Life margin
-
-```
-life_ratio = N_f / N_required          MS_life = life_ratio - 1
-```
-
-A **preliminary fatigue life margin**, not certification life. `N_f >=
-N_required` passes; the boundary passes. A zero-amplitude cycle returns
-`math.inf` — explicitly non-governing rather than a division by zero.
-
-### Cycle requirement
-
-The canonical requirement is **1e4 cycles**, a round figure of the order of a
-couple of years of low-Earth-orbit thermal cycling. It is an **illustrative
-study input, not a spacecraft qualification requirement**. Because the choice
-does affect the verdict, the study reports the full requirement sensitivity
-rather than resting on one number:
-
-| `N_required` | adhesive life ratio (M4 selected point) | |
-|---|---|---|
-| 1e3 | 6.44 | PASS |
-| **1e4** | **0.644** | **FAIL** |
-| 1e5 | 0.0644 | FAIL |
-| 1e6 | 0.0064 | FAIL |
-
-### Results
-
-**Free-joint metal cycles.** Equal areas make `sigma_1 = -sigma_2`, so both
-members see the *same* amplitude and equal-and-opposite mean stress:
-
-| | hot | cold | `sigma_a` | `sigma_m` | `N_f` |
-|---|---|---|---|---|---|
-| member 1 | −62.03 | +86.84 | 74.43 MPa | +12.41 MPa | 1.05e9 |
-| member 2 | +62.03 | −86.84 | 74.43 MPa | −12.41 MPa | 1.96e14 |
-
-**The metal is nowhere near fatigue-critical** — both clear 1e4 cycles by five
-orders of magnitude or more, at every restraint level tested.
-
-**Restrained metal cycles (`eta_r = 1`).** Restraint does **not** degrade both
-members alike: member 1's amplitude rises 1.80× to 133.82 MPa while member 2's
-*falls* 0.25× to 18.88 MPa. Member 1's amplitude is monotonic in restraint;
-**member 2's is not** — it falls to a minimum and rises again. That minimum is
-the Milestone 2 zero-stress crossing at `eta_r = 0.663399`, which is
-`dT`-independent, so *both* endpoints vanish there and the titanium-like member
-sees **no thermal cycle at all**.
-
-**Adhesive cycles.**
-
-| | hot | cold | `tau_a` | `tau_m` | `R` | `N_f` | |
-|---|---|---|---|---|---|---|---|
-| M3 baseline (20 mm, 0.2 mm) | +47.42 | −66.39 | 56.90 MPa | −9.48 MPa | −1.40 | **1.4** | FAIL (also fails statically) |
-| M4 selected (50 mm, 1.0 mm) | +13.42 | −18.78 | 16.10 MPa | −2.68 MPa | −1.40 | **6439** | FAIL |
-
-The mean shear is nonzero because the excursion is asymmetric (−140 K against
-+100 K); a symmetric excursion gives a zero mean, as a test confirms.
-
-### The headline result
-
-**A statically feasible bondline is not automatically fatigue-feasible.** The
-Milestone 4 selected point passes static adhesive shear at MS +0.065 but
-reaches only 6439 cycles against 10 000 required — a life ratio of 0.644. The
-adhesive governs; the metal is irrelevant to this verdict.
-
-`allowable_cycle_scale_for_fatigue(...)` inverts this exactly (amplitude is
-strictly proportional to the excursion, so no search is needed): the governing
-allowable scale is **0.9361**, i.e. the excursion would have to be cut by ~6.4%
-— to +93.6 K / −131.1 K — for that geometry to reach 1e4 cycles. At that scale
-the minimum life ratio is 1.000000000.
-
-### Fatigue versus static sizing
-
-Fatigue is the tighter constraint here. The static screen caps the cold peak
-shear at 20 MPa; the 1e4-cycle fatigue screen caps it at 17.58 MPa. So the
-static-critical and fatigue-critical geometries differ:
-
-| lever | static boundary | fatigue boundary |
-|---|---|---|
-| bond width (at `t_a` = 1.0 mm) | passes from 50 mm | passes from 75 mm |
-| bondline thickness (at `b` = 50 mm) | passes from 1.0 mm | passes from 1.5 mm |
-| adhesive modulus (at 50 mm, 1.0 mm) | passes to 1.0 GPa | passes to 0.5 GPa |
-
-**Bounded fatigue design map** (widths 20–100 mm × thicknesses 0.5–2.0 mm at
-`G_a` = 1.0 GPa), showing adhesive life ratio; `*` passes static yield, static
-shear **and** fatigue:
-
-| `b` \ `t_a` | 0.50 | 0.75 | 1.00 | 1.50 | 2.00 |
-|---|---|---|---|---|---|
-| **20 mm** | 0.003 | 0.011 | 0.029 | 0.101 | 0.232 |
-| **30 mm** | 0.012 | 0.045 | 0.116 | 0.429 | **1.055\*** |
-| **40 mm** | 0.030 | 0.117 | 0.305 | **1.157\*** | **2.923\*** |
-| **50 mm** | 0.064 | 0.247 | 0.644 | **2.465\*** | **6.317\*** |
-| **75 mm** | 0.247 | 0.956 | **2.493\*** | **9.611\*** | **24.95\*** |
-| **100 mm** | 0.645 | **2.494\*** | **6.505\*** | **25.12\*** | **65.42\*** |
-
-**12 of 30** points clear all three screens. Re-selecting with the *same*
-deterministic Milestone 4 policy:
-
-| | M4 static pick | M5 fatigue pick |
-|---|---|---|
-| bond width | 50.00 mm | **30.00 mm** |
-| adhesive thickness | 1.00 mm | **2.00 mm** |
-| bond area | 2000 mm² | **1200 mm²** |
-| static adhesive margin | +0.065 | +0.147 |
-| adhesive life `N_f` | 6439 | **10 545** |
-| minimum life ratio | 0.644 | **1.055** |
-| overall feasible | `False` | **`True`** |
-
-The fatigue-feasible pick is the **narrower** bond, because the wider grid
-allows a thicker, more compliant bondline. Its life ratio of 1.055 is slim.
-
-### Engineering interpretation
-
-- **Fatigue, not yield, is the cycling risk here.** The metals sit five to ten
-  orders of magnitude clear of the requirement; the adhesive sets the answer.
-- **Static feasibility does not imply cyclic feasibility**, and the two
-  boundaries land in different places.
-- **Life is violently nonlinear in amplitude.** With `b = -0.15`, doubling the
-  amplitude costs a factor of ~102 in life, and a 25% larger excursion costs
-  ~4.5×. Small changes in the thermal environment matter far more than they do
-  in any static check.
-- **Restraint is not uniformly bad.** It loads the high-CTE member harder and
-  unloads the low-CTE one, and at one particular stiffness it removes the
-  low-CTE member's cycle entirely.
-- **A softer, thicker bondline lengthens predicted life** in this model — but
-  creep, peel, durability and joint deformation are all absent, so low modulus
-  is not universally superior.
-- **The same caution as Milestone 3 applies, harder.** Peak shear sits at the
-  free edge, exactly where the omitted peel stress and edge singularity act,
-  and fatigue cracks in bonded joints start at precisely that location.
+> **The final configuration is a preliminary screening result within a
+> simplified illustrative design space, not a flight-qualified joint design.**
 
 ---
 
-## API and result structures
+## 11 · Repository structure
 
-| Object | Purpose |
-|---|---|
-| `ThermoelasticMaterial` | name, `elastic_modulus`, `thermal_expansion_coefficient`, `yield_strength`, optional `density` |
-| `AxialMember` | a `material`, an `area`, an optional `label`; exposes `axial_stiffness` (`E*A`) |
-| `common_joint_strain(...)` | the stiffness-weighted common strain |
-| `solve_bimetallic_joint(...)` | full solution → `ThermalJointResult` |
-| `ThermalJointResult` | `delta_temperature`, `common_strain`, both free thermal strains, both stresses, both internal forces, `force_equilibrium_residual` |
-| `YieldBasis` | explicit design basis holding `design_factor` (≥ 1) |
-| `assess_yield(...)` | → `JointYieldAssessment` (two `MemberYieldMargin` records, `governing_member`, `minimum_margin`) |
-| `ThermalEnvironment` | `reference_temperature`, `cold_temperature`, `hot_temperature`; derives `delta_temperature_cold` / `delta_temperature_hot` |
-| `assess_temperature_extremes(...)` | → `TemperatureExtremeAssessment` (both results, both assessments, `governing_extreme`, `governing_member`, `minimum_yield_margin`) |
-
-Milestone 2 additions (all backward compatible — nothing above changed):
-
-| Object | Purpose |
-|---|---|
-| `AxialRestraint` | `stiffness` `K_r` [N] ≥ 0, `reference_strain`, optional `label`; `stiffness_ratio(...)` and `from_stiffness_ratio(...)` |
-| `joint_axial_stiffness(...)` | `E_1 A_1 + E_2 A_2` [N] |
-| `restraint_stiffness_ratio(...)` | `eta_r = K_r / (E_1 A_1 + E_2 A_2)` |
-| `solve_restrained_joint(...)` | → `RestrainedThermalJointResult` |
-| `RestrainedThermalJointResult` | Milestone 1 fields plus `restraint_stiffness`, `restraint_reference_strain`, `restraint_force`, `free_joint_common_strain`; residual is `N_1 + N_2 - N_r` |
-| `rigid_restraint_stresses(...)` | analytic `K_r -> inf` stresses `E_i (eps_ref - alpha_i dT)` |
-| `zero_stress_restraint_stiffness(...)` | restraint at which one member's stress crosses zero, or `None` |
-| `assess_restrained_temperature_extremes(...)` | → `RestrainedTemperatureExtremeAssessment` |
-| `maximum_allowable_restraint_stiffness(...)` | → `MaximumRestraintResult` with a `RestraintLimitStatus` |
-| `rigid_restraint_minimum_margin(...)` | minimum margin in the fully restrained asymptote |
-
-Milestone 3 additions (again purely additive):
-
-| Object | Purpose |
-|---|---|
-| `AdhesiveMaterial` | `shear_modulus`, `shear_strength`, mandatory `source_note`, optional `notes` |
-| `BondedOverlapGeometry` | `overlap_length`, `bond_width`, `adhesive_thickness`; `bond_area`, plus `with_*` copy helpers used by the sweeps |
-| `AdhesiveShearBasis` | `design_factor` ≥ 1; `allowable_shear_stress(...)`, `margin_of_safety(...)` |
-| `thermal_mismatch_strain(...)` | `(alpha_1 - alpha_2) dT` |
-| `adherend_compliance_sum(...)` | `C = 1/(E_1 A_1) + 1/(E_2 A_2)` |
-| `shear_lag_parameter(...)` / `transfer_length(...)` / `dimensionless_overlap(...)` | `beta`, `1/beta`, `lambda = beta L_b` |
-| `solve_shear_lag(...)` | → `ShearLagDemand` |
-| `ShearLagDemand` | scalars plus `shear_stress(x)`, `member_1_force(x)`, `member_2_force(x)`, all range-checked to `[0, L_b]` |
-| `long_overlap_peak_shear_stress(...)` | analytic `tau_inf = |N_t| beta / b` |
-| `assess_shear_lag_extremes(...)` | → `ShearLagExtremeAssessment` |
-| `allowable_temperature_change_for_adhesive_shear(...)` | closed-form `|dT|_allow` [K] |
-| `required_overlap_length(...)` | → `RequiredOverlapResult` with an `OverlapLimitStatus` |
-| `screen_joint(...)` | → `PreliminaryScreeningResult` (yield AND adhesive) |
-
-Milestone 4 additions (purely additive; no Milestone 1–3 module was touched):
-
-| Object | Purpose |
-|---|---|
-| `long_overlap_peak_shear(...)` | analytic `tau_inf` for a whole configuration |
-| `uniform_shear_floor(...)` | `|N_t| / (b L_b)` — the `beta → 0` floor |
-| `JointDesignCandidate` | one evaluated configuration; yield and adhesive margins side by side, plus `bond_area` and `adhesive_volume` |
-| `evaluate_joint_design(...)` | → `JointDesignCandidate` at both extremes |
-| `SensitivityPoint` | one point of a sweep whose variable is not a bondline dimension |
-| `bond_width_sensitivity(...)`, `adhesive_thickness_sensitivity(...)`, `adhesive_modulus_sensitivity(...)` | → tuples of `JointDesignCandidate` |
-| `area_ratio_sensitivity(...)`, `thermal_excursion_sensitivity(...)`, `cte_mismatch_sensitivity(...)` | → tuples of `SensitivityPoint` |
-| `required_bond_width(...)` | → `RequiredBondWidthResult` with a `BondWidthStatus` |
-| `required_adhesive_thickness(...)` | → `RequiredAdhesiveThicknessResult` with an `AdhesiveThicknessStatus` |
-| `maximum_allowable_adhesive_shear_modulus(...)` | → `MaximumAdhesiveModulusResult` with an `AdhesiveModulusStatus` |
-| `width_thickness_design_map(...)` | bounded grid → tuple of candidates, row-major |
-| `select_preliminary_joint_design(...)` | one candidate or `None`, under `DesignSelectionPolicy` |
-
-Milestone 5 additions (again purely additive):
-
-| Object | Purpose |
-|---|---|
-| `StressCycle`, `stress_cycle(...)` | signed endpoints → `alternating_stress`, `mean_stress`, `stress_ratio`, `crosses_zero` |
-| `BasquinFatigueCurve` | `sigma_a = A N^b` with mandatory provenance; `alternating_stress_at_life`, `life_at_alternating_stress` |
-| `ThermalCycleRequirement` | required cycles + label |
-| `FatigueLifeResult`, `assess_fatigue_life(...)` | one component's life, `life_ratio` and `margin` |
-| `FatigueCurveSet` | the three curves (two metal, one adhesive **shear**) |
-| `member_stress_cycles(...)`, `adhesive_shear_cycle(...)` | cycles from the verified M1/M2/M3 solvers |
-| `assess_thermal_cycle_fatigue(...)` | → `ThermalCycleFatigueAssessment` (static + fatigue, side by side) |
-| `restraint_fatigue_sensitivity(...)` | metal-only fatigue across `eta_r` → `RestraintFatiguePoint` |
-| `allowable_cycle_scale_for_fatigue(...)` | exact allowable excursion scale → `AllowableCycleScaleResult` |
-| `temperature_scale_...`, `bond_width_...`, `adhesive_thickness_...`, `adhesive_modulus_...`, `area_ratio_fatigue_sensitivity(...)` | → tuples of `FatigueSweepPoint` |
-| `scale_environment(...)` | scale both excursions about `T_ref`, preserving asymmetry |
-| `fatigue_design_map(...)`, `select_preliminary_fatigue_design(...)` | bounded grid requiring static **and** fatigue feasibility |
-
-### Minimal usage
-
-```python
-from thermal_joint import (
-    AxialMember, ThermalEnvironment, ThermoelasticMaterial,
-    YieldBasis, assess_temperature_extremes,
-)
-
-aluminium_like = ThermoelasticMaterial("Al-like", 70e9, 23e-6, 270e6)
-titanium_like = ThermoelasticMaterial("Ti-like", 110e9, 8.5e-6, 830e6)
-
-joint = (AxialMember(aluminium_like, 100e-6), AxialMember(titanium_like, 100e-6))
-environment = ThermalEnvironment(reference_temperature=20.0,
-                                 cold_temperature=-120.0,
-                                 hot_temperature=120.0)
-
-assessment = assess_temperature_extremes(*joint, environment, YieldBasis(1.25))
-print(assessment.governing_extreme, assessment.minimum_yield_margin)
 ```
+src/thermal_joint/
+  materials.py             ThermoelasticMaterial, AxialMember
+  joint.py                 free-joint compatibility, stresses, equilibrium
+  margins.py               YieldBasis, preliminary elastic yield margins
+  environment.py           ThermalEnvironment
+  extremes.py              hot/cold governing selection
+  restraint.py             AxialRestraint, restrained closed form, limits
+  restrained_extremes.py   hot/cold assessment under restraint
+  inverse.py               maximum tolerable restraint stiffness
+  adhesive.py              AdhesiveMaterial, BondedOverlapGeometry, shear basis
+  shear_lag.py             beta, closed-form distributions, peak vs average
+  shear_lag_extremes.py    hot/cold adhesive shear assessment
+  shear_lag_inverse.py     allowable dT, minimum overlap
+  screening.py             combined yield AND adhesive feasibility
+  design_trade.py          asymptote scaling, sweeps, design map, selection
+  design_inverse.py        width / thickness / modulus inverse sizing
+  fatigue.py               stress cycles, Basquin curves, life margins
+  fatigue_assessment.py    integrated screen, sweeps, fatigue design map
+  illustrative.py          all illustrative inputs (NOT design allowables)
 
-### Milestone 2 usage
-
-```python
-from thermal_joint import (
-    AxialRestraint, assess_restrained_temperature_extremes,
-    maximum_allowable_restraint_stiffness,
-)
-
-# Surrounding structure as stiff as the joint itself, holding it at T_ref length.
-restraint = AxialRestraint.from_stiffness_ratio(1.0, *joint, reference_strain=0.0)
-
-restrained = assess_restrained_temperature_extremes(
-    *joint, environment, restraint, YieldBasis(1.25)
-)
-print(restrained.governing_extreme, restrained.minimum_yield_margin)
-
-limit = maximum_allowable_restraint_stiffness(*joint, environment, YieldBasis(1.25))
-print(limit.status.value, limit.maximum_stiffness_ratio)
-```
-
-### Milestone 3 usage
-
-```python
-from thermal_joint import (
-    AdhesiveMaterial, AdhesiveShearBasis, BondedOverlapGeometry,
-    assess_shear_lag_extremes, required_overlap_length,
-)
-
-adhesive = AdhesiveMaterial(
-    "Adhesive-like", shear_modulus=1.0e9, shear_strength=25e6,
-    source_note="ILLUSTRATIVE ADHESIVE-LIKE INPUT - NOT DESIGN ALLOWABLE",
-)
-overlap = BondedOverlapGeometry(
-    overlap_length=0.040, bond_width=0.020, adhesive_thickness=0.0002,
-)
-
-shear = assess_shear_lag_extremes(
-    *joint, environment, overlap, adhesive, AdhesiveShearBasis(1.25)
-)
-print(shear.governing_extreme, shear.governing_peak_shear_stress, shear.minimum_margin)
-
-sizing = required_overlap_length(
-    *joint, environment, overlap, adhesive, AdhesiveShearBasis(1.25)
-)
-print(sizing.status.value)
-```
-
-### Milestone 4 usage
-
-```python
-from thermal_joint import (
-    required_bond_width, select_preliminary_joint_design, width_thickness_design_map,
-)
-
-sizing = required_bond_width(
-    *joint, environment, overlap, adhesive, AdhesiveShearBasis(1.25)
-)
-print(sizing.status.value, sizing.required_bond_width)
-
-grid = width_thickness_design_map(
-    *joint, environment, overlap, adhesive,
-    bond_widths=[0.010, 0.020, 0.050, 0.100],
-    adhesive_thicknesses=[0.0001, 0.0005, 0.0010],
-    yield_basis=YieldBasis(1.25), adhesive_basis=AdhesiveShearBasis(1.25),
-)
-selected = select_preliminary_joint_design(grid)   # a candidate, or None
-```
-
-### Milestone 5 usage
-
-```python
-from thermal_joint import assess_thermal_cycle_fatigue, allowable_cycle_scale_for_fatigue
-from thermal_joint.illustrative import (
-    illustrative_cycle_requirement, illustrative_fatigue_curves,
-)
-
-curves = illustrative_fatigue_curves()
-requirement = illustrative_cycle_requirement(1.0e4)
-
-assessment = assess_thermal_cycle_fatigue(
-    *joint, environment, overlap, adhesive, curves, requirement,
-    YieldBasis(1.25), AdhesiveShearBasis(1.25),
-)
-print(assessment.governing_fatigue_component, assessment.minimum_life_ratio)
-print(assessment.static_adhesive_feasible, assessment.fatigue_feasible)
-
-scale = allowable_cycle_scale_for_fatigue(
-    *joint, environment, overlap, adhesive, curves, requirement
-)
-print(scale.allowable_scale)   # exact, not iterative
+tests/                     938 tests
+examples/                  six runnable studies (see below)
+figures/                   portfolio figures + make_figures.py
 ```
 
 ---
 
-## Yield-margin convention
+## 12 · Reproduction
 
-Margins are **preliminary elastic yield margins**, not certification margins.
-
-```
-sigma_allow_i = yield_strength_i / design_factor
-MS_yield_i    = sigma_allow_i / abs(sigma_i) - 1
-```
-
-- the **design factor lives in `YieldBasis`, never inside the material**, so
-  material data and design policy stay separable; `design_factor` must be ≥ 1,
-  and the default of 1.0 leaves the allowable equal to the raw yield strength
-- a margin of **exactly zero passes** (`MS >= 0`)
-- a member carrying **zero stress** returns `math.inf` — an explicitly
-  non-governing margin, never a division by zero
-- the **governing member is the one with the smaller margin**, computed rather
-  than assumed; the lower-yield material does *not* automatically govern,
-  because area and modulus redistribute the stress. An exact tie resolves to
-  member 1.
-
-No knockdowns, statistical basis, joint efficiency, plasticity or fatigue
-effects are included.
-
-Milestone 2 **reuses this machinery unchanged**. `assess_yield` accepts any
-result exposing `member_1_stress` and `member_2_stress` (the `MemberStressState`
-protocol), so the free and restrained assessments share one definition of a
-margin, one zero-stress rule and one governing-member rule.
-
----
-
-## Thermal-extreme logic
-
-`ThermalEnvironment` validates that all three temperatures are finite and that
-`cold <= reference <= hot` (equality allowed, which makes that excursion a
-zero-`dT` case). `assess_temperature_extremes` then:
-
-1. solves the joint at `dT_cold = T_cold - T_ref` and at `dT_hot = T_hot - T_ref`
-2. computes a yield assessment at each extreme
-3. selects the **governing extreme from the actual margins** — neither hot nor
-   cold is assumed to govern; an exact tie resolves to `"cold"`
-4. reports the governing member and the minimum margin over both extremes
-
-With temperature-independent properties and **symmetric** excursions
-(`|dT_hot| = |dT_cold|`), the stress magnitudes are identical and only the signs
-reverse, so the two margins are equal. With **asymmetric** excursions the larger
-`|dT|` governs. Both behaviours are covered by tests.
-
----
-
-## Verification strategy
-
-The implementation is not merely exercised, it is **verified** — the tests
-compare it against results derived independently of the production code path:
-
-- **independent closed-form stress equations** — the tests compute
-  `sigma_i` directly from the CTE-mismatch form, never by calling the production
-  common-strain helper, and compare across a grid of area pairs and `dT` values
-- **exact force equilibrium** — `N_1 + N_2` is asserted to vanish to machine
-  precision relative to the force magnitude, at every condition tested
-- **limiting cases** — identical CTE gives exactly zero stress with the common
-  strain equal to the shared free thermal strain; `dT = 0` gives an exactly zero
-  state
-- **heating/cooling symmetry** — reversing `dT` reverses every sign and
-  preserves every magnitude
-- **area-ratio identities** — `sigma_1/sigma_2 = -A_2/A_1` in general, reducing
-  to `-1` only for equal areas
-- **stiffness-weighted strain behaviour** — the common strain is bracketed by
-  the two free thermal strains and moves monotonically toward the free strain of
-  the higher-`E*A` member as either area or modulus is varied
-- **scaling laws** — stress, strain and force are linear in `dT` and in the CTE
-  mismatch `|alpha_1 - alpha_2|`
-- **exact yield-margin boundaries** — a stress exactly at the allowable gives
-  `MS == 0.0` exactly and passes; the zero-stress case returns `inf`
-- **hand calculations** — a round-number case (`E` 100/200 GPa, `A` 200/100 mm²,
-  `alpha` 20/10 ×10⁻⁶ /K, `dT` +50 K → `eps = 7.5e-4`, `sigma = -25/+50 MPa`,
-  `N = ∓5000 N`) is checked against values worked out by hand
-- **governing-selection tests** — cases are constructed in which the
-  higher-yield member governs, and in which either extreme governs, proving
-  neither is hard-coded
-- **input validation sweep** — NaN, ±infinity, non-positive modulus/area/yield,
-  design factor < 1 and malformed environment ordering are all rejected
-
-Milestone 2 adds, in the same spirit:
-
-- **zero-restraint regression** — `K_r = 0` is compared directly against the
-  Milestone 1 API (`solve_bimetallic_joint`, `assess_temperature_extremes`), not
-  against a re-derived copy of the Milestone 1 equations
-- **independent back substitution** — the computed strain is substituted into
-  `E_1 A_1 (eps - a_1 dT) + E_2 A_2 (eps - a_2 dT) + K_r (eps - eps_ref) = 0`
-  using raw scalars, bypassing the result's own force fields
-- **full equilibrium under restraint** — `N_1 + N_2 - N_r` vanishes to machine
-  precision at every restraint level and reference strain tested
-- **rigid-restraint limit** — large-`K_r` numerics are checked against the
-  analytic `E_i (eps_ref - alpha_i dT)` form, for zero and nonzero `eps_ref`
-- **the qualitative transition** — the free joint is asserted to be
-  self-equilibrating and the strongly restrained joint same-sign
-- **analytic zero-stress crossing** — the closed-form crossing stiffness is
-  checked against the numerically observed sign change, and its
-  `dT`-independence for `eps_ref = 0` is verified
-- **restraint load sharing** — member forces are shown to stop being equal and
-  opposite, while `N_1 + N_2` tracks `N_r`
-- **non-monotonicity is tested, not assumed** — member 1's stress magnitude is
-  asserted monotone in restraint and member 2's is asserted *not* monotone
-- **hand calculations** — a round-number restrained case
-  (`K_r = 1.0e7 N`, `eta_r = 0.25`, `dT = +50 K` → `eps = 6.0e-4`,
-  `sigma = -40/+20 MPa`, `N_r = -6000 N`) and a nonzero-`eps_ref` variant
-- **inverse-design round trip** — the returned boundary matches an independent
-  analytical derivation, has a ~zero margin, passes just below and fails just
-  above; all four statuses are exercised, including a synthetic joint that
-  proves the bisection itself works
-
-Milestone 3 adds, again in the same spirit:
-
-- **independent numerical integration** — a Simpson rule implemented inside the
-  test integrates the production `tau(x)` and reproduces the adherend force
-  change, end to end and on sub-intervals; the model's own closed-form integral
-  is never used to check itself
-- **hand calculations with a round `beta`** — inputs chosen so `beta = 100 /m`
-  and `lambda = 2` exactly, giving `tau_avg = 12.5 MPa`, `tau_peak = 25 MPa ×
-  coth(2)`, `N_1(10 mm) = -3379.9 N`
-- **the peak location is proven, not assumed** — the derivative argument is
-  backed by scanning 5001 stations across the overlap
-- **self-equilibrium everywhere** — `N_1 + N_2 = 0` checked at 51 stations
-- **demand reuse** — the transferred force is asserted *bit-identical* to
-  `solve_bimetallic_joint(...).member_1_force`, and separately cross-checked
-  against the independent identity `N_t = -d_eps / C`
-- **short and long overlap limits** — `lambda coth(lambda) → 1` at
-  `lambda < 0.06`, the distribution itself flattening to within 0.1%; and peak
-  shear converging monotonically on the analytic asymptote from above with
-  strictly diminishing returns per doubling
-- **scaling laws** — peak shear exactly linear in `dT`, cold/hot ratio exactly
-  1.4 for the canonical environment
-- **inverse design** — the allowable `dT` round-trips to `MS = 0` exactly, the
-  finite required length matches an independent `atanh` solution, and all four
-  overlap statuses are exercised, three of them with synthetic fixtures
-- **numerical robustness** — a `lambda = 100` overlap evaluates without
-  overflow, thanks to overflow-safe hyperbolic ratios
-- **regression on the earlier milestones** — the Milestone 1 stresses and
-  margins and the Milestone 2 restrained results, crossing stiffness and
-  restraint boundary are all re-asserted from Milestone 3 test files
-- **sweeps are non-mutating** — the shipped members, geometry and adhesive are
-  asserted unchanged after every sensitivity sweep
-
-Milestone 4 adds:
-
-- **power-law exponents measured, not asserted** — every asymptotic exponent is
-  recovered numerically from a factor change and checked to 1e-12
-- **the width trap is tested explicitly** — `b^(-1/2)` is confirmed *and* the
-  naive `1/b` scaling is asserted to be wrong
-- **monotonicity before bisection** — each sweep is asserted monotone in the
-  direction the derivation predicts, so every inverse search is well posed
-- **the uniform-shear floor** — verified as the `beta → 0` limit with a
-  1 kPa-modulus adhesive, and shown to trigger
-  `no_finite_thickness_within_model` on a 5 mm-wide bond
-- **inverse round trips** — each returned boundary gives `MS ≈ 0`, fails just
-  inside and passes just outside; the required width is separately checked
-  against a closed-form asymptotic estimate
-- **all statuses exercised**, including the two bracket-too-narrow cases
-- **selection determinism and order-independence** — the map is shuffled and
-  reversed and yields the same pick; the thickness tie-break is tested at equal
-  bond area against a candidate with a *larger* margin, proving the stated
-  policy order is what actually runs
-- **`None` on infeasibility** — a grid with no feasible point returns nothing
-  rather than a best-effort pick
-- **no mass invented** — the candidate is asserted to expose no mass or density
-  attribute, and no combined margin attribute
-- **prior milestones re-asserted** from Milestone 4 test files: M1 stresses and
-  margins, M2 restrained results, crossing and restraint boundary, M3 baseline
-  shear-lag and `no_finite_length_within_model`
-
-Milestone 5 adds:
-
-- **the signed-endpoint trap is tested directly** — feeding two peak
-  *magnitudes* instead of signed values is shown to collapse the cycle and
-  under-predict the amplitude sixfold, so the mistake cannot creep back in
-- **both adhesive endpoints are asserted to come from the same station**
-  (`x = L_b`), and to have opposite signs with unequal magnitudes
-- **the mean-stress policy is enforced by test** — four cycles with identical
-  amplitude and four different mean stresses give one identical life
-- **curve round trips** — `stress_at_life(life_at_stress(x)) == x` across three
-  curves and five decades, plus hand calculations at round decade lives
-- **cycle endpoints are asserted bit-identical** to the Milestone 1 free-joint
-  and Milestone 2 restrained stresses
-- **non-monotonicity is asserted, not assumed** — member 2's amplitude is
-  asserted *not* sorted in either direction, and its cycle is shown to vanish
-  at the Milestone 2 crossing
-- **the Basquin power law is verified through the sweeps** — scaled life is
-  checked against `scale^(1/b)` rather than merely being monotone
-- **the allowable cycle scale round-trips to a life ratio of 1** to 1e-9, and
-  is bracketed either side
-- **the fatigue design map and selection** are checked for shape, ordering,
-  determinism, order-independence, `None` on infeasibility, and against the
-  Milestone 4 static pick
-- **the requirement choice is shown to matter** — a lenient requirement is
-  asserted to yield strictly more feasible points, so the 1e4 figure cannot
-  hide behind the map
-- **M1, M2, M3 and M4 outputs re-asserted** from the Milestone 5 test files
-
-The suite currently has **938 passing tests** — the 276 Milestone 1, 258
-Milestone 2, 189 Milestone 3 and 101 Milestone 4 tests, unchanged and still
-green, plus 114 Milestone 5 tests.
-
----
-
-## Limitations
-
-### Milestone 3 (adhesive shear-lag)
-
-1-D shear-lag only · no peel stress · no bending or eccentricity · no free-edge
-singularity · no adhesive normal stress · no adhesive plasticity · no
-cohesive-zone or fracture model · no debond growth · no creep · no fatigue · no
-thermal gradient · no temperature-dependent properties · no fillets or spew
-geometry · no surface-preparation effects · no manufacturing defects · no
-environmental degradation · illustrative adhesive properties · **no
-certification claim**
-
-The prescribed loaded-plane force is a conservative idealisation: it assumes the
-mismatch force is fully developed and asks the overlap to carry all of it. Peak
-shear at a free edge is exactly where a real bondline is least well represented
-by a 1-D model — peel stress and the edge singularity, both excluded here, act
-in the same place.
-
-### Milestone 5 (fatigue screen)
-
-Constant-amplitude two-endpoint screen only · **illustrative S-N curves, not
-design allowables** · no mean-stress correction · no crack growth · no fracture
-mechanics · no rainflow counting · no variable-amplitude spectra · no Miner
-summation · no adhesive peel fatigue · no multiaxial fatigue · no plastic-strain
-fatigue or Coffin-Manson · no creep-fatigue interaction · no
-temperature-dependent fatigue properties · no environmental degradation · no
-probabilistic scatter or reliability factors · no dwell-time or rate effects ·
-no transient path between the endpoints · **no certification claim**
-
-The Basquin fits have no endurance limit and no low-cycle cut-off, so lives read
-outside roughly 1e3–1e8 cycles are extrapolations. Predicted lives of 1e9 and
-above should be read as "not governing", not as literal numbers.
-
-### Milestone 4 (design trade)
-
-Bounded design trade only · no adhesive mass model unless a density with
-provenance is supplied · no manufacturability constraint · no minimum or maximum
-practical bondline thickness · no adhesive cure or process limits · no
-compliance-durability model · no creep · no fatigue · no fracture · no peel · no
-edge singularity · no thermal-property variation · no environmental degradation
-· illustrative adhesive properties · **inverse results are model-based screening
-values, not allowables** · no claim of global optimality
-
-The selected point is a preliminary feasible point within the bounded study
-grid, not an optimized flight-joint design. A 2.5 mm bondline or a 220 mm bond
-may be perfectly reasonable arithmetic and quite unreasonable hardware; this
-model has no way to tell.
-
-### Global model
-
-Not modelled through Milestone 2, and **not** to be inferred from these results:
-
-bolts and fasteners · contact and slip · nonlinear springs · plasticity ·
-creep · fatigue · thermal gradients through thickness ·
-temperature-dependent properties · nonlinear material behaviour · plate
-bending and warpage · detailed radiator geometry · optimization · candidate
-material trade studies · portfolio figures
-
-In short: *the global model is a perfectly bonded, uniform-temperature axial
-compatibility model with a single linear external restraint, and the local model
-is a one-dimensional linear-elastic adhesive shear-lag screen; thermal
-gradients, plasticity, fatigue, peel and fracture are not included.*
-
-The restraint is one lumped linear spring acting on the common joint strain. It
-represents a surrounding load path in aggregate; it is not a model of any
-particular bracket, fitting or fastener.
-
-The margins produced are preliminary elastic yield margins for a portfolio
-study. They are not certification margins and the material properties are not
-design allowables.
-
----
-
-## Repository structure
-
-```
-.
-├── pyproject.toml
-├── README.md
-├── src/thermal_joint/
-│   ├── __init__.py          public API
-│   ├── _validation.py       shared numeric input validation
-│   ├── materials.py         ThermoelasticMaterial, AxialMember
-│   ├── joint.py             common strain, stresses, forces, equilibrium residual
-│   ├── margins.py           YieldBasis, margins, governing member
-│   ├── environment.py       ThermalEnvironment
-│   ├── extremes.py          hot/cold assessment and governing extreme
-│   ├── illustrative.py      illustrative inputs (NOT design allowables)
-│   ├── restraint.py         M2: AxialRestraint, restrained closed form, limits
-│   ├── restrained_extremes.py  M2: hot/cold assessment under restraint
-│   ├── inverse.py           M2: maximum tolerable restraint stiffness
-│   ├── adhesive.py          M3: adhesive, overlap geometry, shear basis
-│   ├── shear_lag.py         M3: beta, closed-form distributions, peak/average
-│   ├── shear_lag_extremes.py   M3: hot/cold adhesive shear assessment
-│   ├── shear_lag_inverse.py    M3: allowable dT and minimum overlap
-│   ├── screening.py         M3: combined yield AND adhesive feasibility
-│   ├── design_trade.py      M4: scaling, sweeps, design map, selection policy
-│   ├── design_inverse.py    M4: width / thickness / modulus inverse sizing
-│   ├── fatigue.py           M5: stress cycles, Basquin curves, life margins
-│   └── fatigue_assessment.py   M5: integrated screen, sweeps, fatigue map
-├── tests/
-│   ├── conftest.py                      makes src/ importable without install
-│   ├── reference_solution.py            independent closed-form check
-│   ├── cases.py                         shared hand-calculation inputs
-│   ├── restrained_cases.py              M2 hand-calculation inputs
-│   ├── test_materials_and_members.py    M1 tests A–G
-│   ├── test_free_thermal_strain.py      M1 tests H–L
-│   ├── test_joint_mechanics.py          M1 tests M–U
-│   ├── test_limits_and_scaling.py       M1 tests V–AC
-│   ├── test_yield_margins.py            M1 tests AD–AK
-│   ├── test_thermal_extremes.py         M1 tests AL–AR
-│   ├── test_invalid_inputs.py           M1 invalid-input sweep
-│   ├── test_physical_interpretation.py  M1 expected physics and regression lock
-│   ├── test_restraint_object.py         M2 tests A–F
-│   ├── test_restrained_closed_form.py   M2 tests G–M
-│   ├── test_restrained_limits.py        M2 tests N–V
-│   ├── test_restraint_sensitivity.py    M2 load sharing, sensitivity, sign flip
-│   ├── test_restrained_extremes.py      M2 margins and governing selection
-│   ├── test_inverse_restraint.py        M2 inverse-design search
-│   ├── shear_lag_cases.py               M3 hand-calculation inputs
-│   ├── test_adhesive_and_overlap.py     M3 tests A–I
-│   ├── test_shear_lag_parameters.py     M3 tests J–Q
-│   ├── test_shear_lag_distribution.py   M3 tests R–Y
-│   ├── test_shear_lag_limits.py         M3 tests Z–AH
-│   ├── test_adhesive_margins.py         M3 tests AI–AO
-│   ├── test_shear_lag_inverse.py        M3 tests AP–AW
-│   ├── test_milestone_integration.py    M3 tests AX–BC (M1/M2 regression)
-│   ├── test_shear_lag_sensitivity.py    M3 tests BD–BI
-│   ├── design_cases.py                  M4 canonical fixtures
-│   ├── test_design_scaling.py           M4 tests A–F
-│   ├── test_design_sensitivity.py       M4 tests G–AE
-│   ├── test_design_inverse.py           M4 tests AF–AW
-│   ├── test_design_map_and_selection.py M4 tests AX–BM
-│   ├── fatigue_cases.py                 M5 canonical fixtures
-│   ├── test_fatigue_cycles.py           M5 cycles and the signed-endpoint trap
-│   ├── test_fatigue_curves.py           M5 curves and mean-stress policy
-│   ├── test_fatigue_assessment.py       M5 integrated static + fatigue screen
-│   ├── test_fatigue_sensitivity.py      M5 sensitivity sweeps
-│   └── test_fatigue_design_and_regression.py  M5 map, selection, M1–M4 regression
-└── examples/
-    ├── bimetallic_joint_sanity.py       M1 free-joint sanity study
-    ├── restraint_sensitivity.py         M2 restraint study
-    ├── adhesive_shear_lag.py            M3 adhesive shear-lag study
-    ├── joint_design_trade.py            M4 bondline design trade
-    └── thermal_cycle_fatigue.py         M5 thermal-cycle fatigue screen
-```
-
-The model is pure Python standard library — the closed-form Milestone 1
-mechanics does not require NumPy.
-
----
-
-## Install, test, run
-
-Requires Python 3.10 or newer. From the repository root:
+Requires Python 3.10+.
 
 ```bash
 python -m venv .venv && source .venv/bin/activate
-pip install -e ".[test]"
+pip install -e ".[test,figures]"
 ```
 
 Run the test suite:
@@ -1610,44 +458,42 @@ Run the test suite:
 pytest
 ```
 
-Run the Milestone 1 sanity study:
+Run the final integrated assessment — this reproduces every number in this
+README:
 
 ```bash
-python examples/bimetallic_joint_sanity.py
+python examples/final_thermal_joint_assessment.py
 ```
 
-Run the Milestone 2 restraint study:
+The individual studies:
 
 ```bash
-python examples/restraint_sensitivity.py
+python examples/bimetallic_joint_sanity.py     # free-joint thermal compatibility
+python examples/restraint_sensitivity.py       # external restraint
+python examples/adhesive_shear_lag.py          # adhesive shear-lag
+python examples/joint_design_trade.py          # static bondline design trade
+python examples/thermal_cycle_fatigue.py       # thermal-cycle fatigue screen
 ```
 
-Run the Milestone 3 adhesive shear-lag study:
+Regenerate the figures:
 
 ```bash
-python examples/adhesive_shear_lag.py
+python figures/make_figures.py
 ```
 
-Run the Milestone 4 bondline design trade:
-
-```bash
-python examples/joint_design_trade.py
-```
-
-Run the Milestone 5 thermal-cycle fatigue screen:
-
-```bash
-python examples/thermal_cycle_fatigue.py
-```
-
-The tests and the example both insert `src/` on `sys.path`, so they also run
-directly from a clean checkout without installing the package.
+The tests and examples insert `src/` on `sys.path`, so they also run from a
+clean checkout without installing. Figure output is byte-identical across runs
+on a fixed matplotlib/FreeType build; different matplotlib or FreeType versions
+will render slightly different bytes while plotting identical data.
 
 ---
 
-## Licensing status
+## 13 · License
 
-**No license has been chosen for this repository yet.** There is no `LICENSE`
-file and no license metadata in `pyproject.toml`. Absent a license, default
-copyright applies and no reuse rights are granted. A license will be added only
-on an explicit decision by the repository owner.
+Released under the [MIT License](LICENSE). Copyright (c) 2026 Sanjana.
+
+The licence covers the **code**. It does not turn any number in this repository
+into a design allowable: the material properties, adhesive properties, fatigue
+curves and thermal-cycle requirement are illustrative throughout, and the
+results are preliminary screening output, not a flight-qualified joint design.
+
